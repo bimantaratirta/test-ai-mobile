@@ -1,0 +1,8 @@
+.env
+.env.local
+.git
+.github
+tmp/
+bin/
+*.test
+coverage.out
