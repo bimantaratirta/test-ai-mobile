@@ -66,5 +66,11 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>Used to photograph the empty room you want designed.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Used to pick an empty-room photo from your library.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Used to save generated designs to your photos.</string>
 </dict>
 </plist>

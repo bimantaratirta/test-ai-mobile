@@ -9,6 +9,7 @@ import 'features/auth/welcome_screen.dart';
 import 'features/auth/login_screen.dart';
 import 'features/auth/invite_screen.dart';
 import 'features/home/home_shell.dart';
+import 'features/capture/capture_screen.dart';
 
 // All screens are referenced by name only here. Implementations come
 // in later tasks. Until those screens exist we use a placeholder
@@ -67,7 +68,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/login',   builder: (_, __) => const LoginScreen()),
       GoRoute(path: '/invite',  builder: (_, __) => const InviteScreen()),
       GoRoute(path: '/home',    builder: (_, __) => const HomeShell()),
-      GoRoute(path: '/capture', builder: (_, __) => const _SoonScreen('Capture')),
+      GoRoute(path: '/capture', builder: (_, __) => const CaptureScreen()),
       GoRoute(path: '/compose', builder: (_, __) => const _SoonScreen('Compose')),
       GoRoute(path: '/job/:id', builder: (_, st) =>
           _SoonScreen('Job ${st.pathParameters['id']}')),
