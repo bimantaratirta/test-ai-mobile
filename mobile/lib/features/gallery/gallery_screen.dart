@@ -37,7 +37,7 @@ class GalleryScreen extends ConsumerWidget {
             itemBuilder: (_, i) {
               final j = jobs[i];
               return GestureDetector(
-                onTap: () => context.go('/gallery/${j.id}'),
+                onTap: () => context.push('/gallery/${j.id}'),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(10),
                   child: j.outputImageUrl != null
