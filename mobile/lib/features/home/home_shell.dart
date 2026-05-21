@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../auth/auth_state.dart';
+import '../gallery/gallery_screen.dart';
 
 class HomeShell extends ConsumerStatefulWidget {
   const HomeShell({super.key});
@@ -37,7 +38,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
         index: _tab,
         children: const [
           _ComposeTabCTA(),
-          _GalleryTabPlaceholder(),
+          GalleryScreen(),
         ],
       ),
       bottomNavigationBar: NavigationBar(
@@ -96,13 +97,5 @@ class _ComposeTabCTA extends StatelessWidget {
         ),
       ),
     );
-  }
-}
-
-class _GalleryTabPlaceholder extends StatelessWidget {
-  const _GalleryTabPlaceholder();
-  @override
-  Widget build(BuildContext context) {
-    return const Center(child: Text('Gallery — coming soon'));
   }
 }
