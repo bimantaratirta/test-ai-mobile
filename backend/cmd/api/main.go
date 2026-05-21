@@ -7,6 +7,7 @@ import (
 	stdhttp "net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -94,9 +95,19 @@ func main() {
 	})
 	go worker.Run(ctx)
 
+	jwksURL := strings.TrimRight(cfg.SupabaseURL, "/") + "/auth/v1/.well-known/jwks.json"
+	verifier, err := auth.NewJWKSVerifier(ctx, jwksURL)
+	if err != nil {
+		slog.Error("jwks init", "err", err, "url", jwksURL)
+		os.Exit(1)
+	}
+	slog.Info("jwt verifier initialized", "jwks_url", jwksURL)
+
 	router := obs.Middleware(apphttp.NewRouter(apphttp.Deps{
-		JWTVerifier: auth.NewVerifier(cfg.SupabaseJWTSecret),
-		DB: database, S3: s3, Generation: svc,
+		JWTVerifier: verifier,
+		DB:          database,
+		S3:          s3,
+		Generation:  svc,
 	}))
 
 	srv := &stdhttp.Server{
