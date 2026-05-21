@@ -31,9 +31,9 @@ func TestWorker_ProcessesQueuedJob(t *testing.T) {
 
 	reg := providers.NewRegistry()
 	reg.Register(db.ModeRealistic, mock.New("mock"))
-	r2, _ := storage.NewR2("acc", "ak", "sk", "bkt", "https://cdn.test")
+	s3, _ := storage.NewS3("https://cdn.test", "auto", "ak", "sk", "bkt", "https://cdn.test")
 
-	w := NewWorker(WorkerDeps{DB: d, Registry: reg, R2: r2, Concurrency: 1, PollInterval: 50 * time.Millisecond})
+	w := NewWorker(WorkerDeps{DB: d, Registry: reg, S3: s3, Concurrency: 1, PollInterval: 50 * time.Millisecond})
 	go w.Run(ctx)
 
 	require.Eventually(t, func() bool {

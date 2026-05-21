@@ -16,7 +16,7 @@ import (
 type WorkerDeps struct {
 	DB           *db.DB
 	Registry     *providers.Registry
-	R2           *storage.R2
+	S3           *storage.S3
 	Concurrency  int
 	PollInterval time.Duration
 	JobTimeout   time.Duration
@@ -99,7 +99,7 @@ func (w *Worker) process(parent context.Context, job db.Job) {
 	}
 
 	key := fmt.Sprintf("outputs/%s.%s", uuid.New(), extFor(result.OutputContentType))
-	publicURL, err := w.d.R2.Upload(ctx, key, result.OutputContentType, result.OutputImageBytes)
+	publicURL, err := w.d.S3.Upload(ctx, key, result.OutputContentType, result.OutputImageBytes)
 	if err != nil {
 		w.fail(ctx, job, fmt.Errorf("storage_error: %w", err))
 		return

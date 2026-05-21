@@ -50,12 +50,12 @@ func newTestServer(t *testing.T) (*httptest.Server, *db.DB, uuid.UUID) {
 	reg.Register(db.ModeInspirational, mock.New("mock"))
 	gate := ratelimit.New(ratelimit.Config{DB: d, PerDay: 10, PerWeek: 30, GlobalCostCap: 25, MaxConcurrent: 3})
 	svc := generation.NewService(generation.Deps{DB: d, Registry: reg, Gate: gate})
-	r2, _ := storage.NewR2("acc", "ak", "sk", "bkt", "https://cdn.test")
+	s3, _ := storage.NewS3("https://cdn.test", "auto", "ak", "sk", "bkt", "https://cdn.test")
 
 	router := apphttp.NewRouter(apphttp.Deps{
 		JWTVerifier: auth.NewVerifier(secret),
 		DB:          d,
-		R2:          r2,
+		S3:          s3,
 		Generation:  svc,
 	})
 	return httptest.NewServer(router), d, uid

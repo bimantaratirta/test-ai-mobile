@@ -20,7 +20,7 @@ type PresignResponse struct {
 	Key       string `json:"key"`
 }
 
-func PresignUpload(r2 *storage.R2) http.HandlerFunc {
+func PresignUpload(r2 *storage.S3) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		uid, err := auth.UserIDFrom(r.Context())
 		if err != nil {

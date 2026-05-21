@@ -16,7 +16,7 @@ import (
 type Deps struct {
 	JWTVerifier *auth.Verifier
 	DB          *db.DB
-	R2          *storage.R2
+	S3          *storage.S3
 	Generation  *generation.Service
 }
 
@@ -33,7 +33,7 @@ func NewRouter(d Deps) stdhttp.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(auth.Required(d.JWTVerifier))
 		r.Post("/redeem-invite", handlers.RedeemInvite(d.DB))
-		r.Post("/uploads/presign", handlers.PresignUpload(d.R2))
+		r.Post("/uploads/presign", handlers.PresignUpload(d.S3))
 		r.Post("/generate", handlers.Generate(d.Generation))
 		r.Get("/jobs", handlers.ListJobs(d.DB))
 		r.Get("/jobs/{id}", handlers.GetJob(d.DB))

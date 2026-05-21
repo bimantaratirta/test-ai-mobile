@@ -18,7 +18,7 @@ import (
 	"github.com/bimantara/ai-image/backend/internal/obs"
 	"github.com/bimantara/ai-image/backend/internal/providers"
 	"github.com/bimantara/ai-image/backend/internal/providers/flux"
-	"github.com/bimantara/ai-image/backend/internal/providers/gemini"
+	"github.com/bimantara/ai-image/backend/internal/providers/openrouter"
 	"github.com/bimantara/ai-image/backend/internal/ratelimit"
 	"github.com/bimantara/ai-image/backend/internal/storage"
 )
@@ -28,7 +28,8 @@ func main() {
 
 	cfg, err := config.Load()
 	if err != nil {
-		slog.Error("config", "err", err); os.Exit(1)
+		slog.Error("config", "err", err)
+		os.Exit(1)
 	}
 
 	if err := obs.Init(cfg.SentryDSN, cfg.Env); err != nil {
@@ -40,17 +41,47 @@ func main() {
 	defer cancel()
 
 	database, err := db.New(ctx, cfg.DatabaseURL)
-	if err != nil { slog.Error("db", "err", err); os.Exit(1) }
+	if err != nil {
+		slog.Error("db", "err", err)
+		os.Exit(1)
+	}
 	defer database.Close()
 
-	r2, err := storage.NewR2(cfg.R2AccountID, cfg.R2AccessKeyID, cfg.R2SecretAccessKey, cfg.R2Bucket, cfg.R2PublicBaseURL)
-	if err != nil { slog.Error("r2", "err", err); os.Exit(1) }
+	s3, err := storage.NewS3(
+		cfg.S3Endpoint, cfg.S3Region,
+		cfg.S3AccessKeyID, cfg.S3SecretAccessKey,
+		cfg.S3Bucket, cfg.S3PublicBaseURL,
+	)
+	if err != nil {
+		slog.Error("s3", "err", err)
+		os.Exit(1)
+	}
 
 	reg := providers.NewRegistry()
-	reg.Register(db.ModeRealistic, gemini.New(gemini.Config{APIKey: cfg.GeminiAPIKey}))
-	reg.Register(db.ModeInspirational, flux.New(flux.Config{
-		Token: cfg.ReplicateAPIToken, ModelVersion: cfg.ReplicateFluxVersion,
+	// Realistic mode: always via OpenRouter
+	reg.Register(db.ModeRealistic, openrouter.New(openrouter.Config{
+		APIKey: cfg.OpenRouterAPIKey,
+		Model:  cfg.OpenRouterRealisticModel,
+		Name:   "openrouter-realistic",
 	}))
+	// Inspirational mode: conditional registration
+	switch {
+	case cfg.OpenRouterInspirationalModel != "":
+		reg.Register(db.ModeInspirational, openrouter.New(openrouter.Config{
+			APIKey: cfg.OpenRouterAPIKey,
+			Model:  cfg.OpenRouterInspirationalModel,
+			Name:   "openrouter-inspirational",
+		}))
+		slog.Info("inspirational mode: OpenRouter", "model", cfg.OpenRouterInspirationalModel)
+	case cfg.ReplicateAPIToken != "" && cfg.ReplicateFluxVersion != "":
+		reg.Register(db.ModeInspirational, flux.New(flux.Config{
+			Token:        cfg.ReplicateAPIToken,
+			ModelVersion: cfg.ReplicateFluxVersion,
+		}))
+		slog.Info("inspirational mode: Flux via Replicate")
+	default:
+		slog.Warn("inspirational mode disabled: set OPENROUTER_INSPIRATIONAL_MODEL or REPLICATE_API_TOKEN+REPLICATE_FLUX_VERSION to enable")
+	}
 
 	gate := ratelimit.New(ratelimit.Config{
 		DB: database, PerDay: cfg.RateLimitPerDay, PerWeek: cfg.RateLimitPerWeek,
@@ -59,13 +90,13 @@ func main() {
 	svc := generation.NewService(generation.Deps{DB: database, Registry: reg, Gate: gate})
 
 	worker := generation.NewWorker(generation.WorkerDeps{
-		DB: database, Registry: reg, R2: r2, Concurrency: 4,
+		DB: database, Registry: reg, S3: s3, Concurrency: 4,
 	})
 	go worker.Run(ctx)
 
 	router := obs.Middleware(apphttp.NewRouter(apphttp.Deps{
 		JWTVerifier: auth.NewVerifier(cfg.SupabaseJWTSecret),
-		DB: database, R2: r2, Generation: svc,
+		DB: database, S3: s3, Generation: svc,
 	}))
 
 	srv := &stdhttp.Server{
@@ -86,7 +117,8 @@ func main() {
 
 	slog.Info("listening", "port", cfg.Port, "env", cfg.Env)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, stdhttp.ErrServerClosed) {
-		slog.Error("server", "err", err); os.Exit(1)
+		slog.Error("server", "err", err)
+		os.Exit(1)
 	}
 	<-done
 }
