@@ -10,11 +10,19 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/bimantara/ai-image/backend/internal/config"
 )
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
+
+	cfg, err := config.Load()
+	if err != nil {
+		slog.Error("config load failed", "err", err)
+		os.Exit(1)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
@@ -22,12 +30,8 @@ func main() {
 		fmt.Fprintln(w, `{"status":"ok"}`)
 	})
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
 	srv := &http.Server{
-		Addr:         ":" + port,
+		Addr:         ":" + cfg.Port,
 		Handler:      mux,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 100 * time.Second,
@@ -47,7 +51,7 @@ func main() {
 		close(idleConnsClosed)
 	}()
 
-	slog.Info("server starting", "port", port)
+	slog.Info("server starting", "port", cfg.Port, "env", cfg.Env)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		slog.Error("server failed", "err", err)
 		os.Exit(1)
