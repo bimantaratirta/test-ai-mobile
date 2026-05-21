@@ -32,7 +32,9 @@ func NewWorker(d WorkerDeps) *Worker {
 		d.PollInterval = 2 * time.Second
 	}
 	if d.JobTimeout <= 0 {
-		d.JobTimeout = 90 * time.Second
+		// 4 minutes leaves headroom for Flex-tier OpenRouter calls (which
+		// can take 20–90s typically, occasionally longer at peak).
+		d.JobTimeout = 240 * time.Second
 	}
 	return &Worker{d: d}
 }

@@ -16,17 +16,28 @@ import (
 )
 
 const (
-	defaultBaseURL    = "https://openrouter.ai/api/v1"
-	estimatedCostUSD  = 0.039 // approximate per-image cost via OpenRouter
-	requestTimeoutSec = 60
+	defaultBaseURL = "https://openrouter.ai/api/v1"
+	// estimatedCostUSD approximates per-image cost. With Flex service tier
+	// (the default below) Google charges ~50% of the standard rate, so the
+	// effective cost is roughly half of the $0.039 standard rate.
+	estimatedCostUSD = 0.020
+	// Flex tier latency is variable (typically 20–90 s, sometimes longer
+	// during peak). Give the HTTP client headroom over the worker timeout.
+	requestTimeoutSec = 180
+	// defaultServiceTier is OpenRouter's service tier hint. "flex" maps to
+	// the provider's discounted-but-no-SLA tier (Google Vertex Flex).
+	defaultServiceTier = "flex"
 )
 
 type Config struct {
 	APIKey  string
 	BaseURL string
-	Model   string // e.g. "google/gemini-2.5-flash-image-preview"
+	Model   string // e.g. "google/gemini-2.5-flash-image"
 	Name    string // provider name reported via Name() — defaults to "openrouter"
-	Client  *http.Client
+	// ServiceTier overrides defaultServiceTier ("flex"). Set to "default"
+	// or "priority" to opt into faster (and more expensive) processing.
+	ServiceTier string
+	Client      *http.Client
 }
 
 type Provider struct{ cfg Config }
@@ -47,9 +58,10 @@ func New(cfg Config) *Provider {
 func (p *Provider) Name() string { return p.cfg.Name }
 
 type chatReq struct {
-	Model      string    `json:"model"`
-	Messages   []message `json:"messages"`
-	Modalities []string  `json:"modalities,omitempty"`
+	Model       string    `json:"model"`
+	Messages    []message `json:"messages"`
+	Modalities  []string  `json:"modalities,omitempty"`
+	ServiceTier string    `json:"service_tier,omitempty"`
 }
 
 type message struct {
@@ -101,6 +113,11 @@ func (p *Provider) Generate(ctx context.Context, in providers.Input) (providers.
 
 	prompt := buildPrompt(in.Prompt, in.StylePreset)
 
+	tier := p.cfg.ServiceTier
+	if tier == "" {
+		tier = defaultServiceTier
+	}
+
 	body := chatReq{
 		Model: p.cfg.Model,
 		Messages: []message{{
@@ -110,7 +127,8 @@ func (p *Provider) Generate(ctx context.Context, in providers.Input) (providers.
 				{Type: "image_url", ImageURL: &imageURL{URL: dataURI}},
 			},
 		}},
-		Modalities: []string{"image", "text"},
+		Modalities:  []string{"image", "text"},
+		ServiceTier: tier,
 	}
 	b, _ := json.Marshal(body)
 
