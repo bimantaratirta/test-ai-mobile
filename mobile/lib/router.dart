@@ -11,6 +11,7 @@ import 'features/auth/invite_screen.dart';
 import 'features/home/home_shell.dart';
 import 'features/capture/capture_screen.dart';
 import 'features/compose/compose_screen.dart';
+import 'features/job/job_progress_screen.dart';
 
 // All screens are referenced by name only here. Implementations come
 // in later tasks. Until those screens exist we use a placeholder
@@ -82,8 +83,11 @@ final routerProvider = Provider<GoRouter>((ref) {
           return ComposeScreen(capture: extra);
         },
       ),
-      GoRoute(path: '/job/:id', builder: (_, st) =>
-          _SoonScreen('Job ${st.pathParameters['id']}')),
+      GoRoute(
+        path: '/job/:id',
+        builder: (_, st) =>
+            JobProgressScreen(jobId: st.pathParameters['id']!),
+      ),
       GoRoute(path: '/gallery', builder: (_, __) => const _SoonScreen('Gallery')),
       GoRoute(path: '/gallery/:id', builder: (_, st) =>
           _SoonScreen('Gallery item ${st.pathParameters['id']}')),
