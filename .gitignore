@@ -42,3 +42,6 @@ backend/tmp/
 backend/vendor/
 backend/*.test
 backend/coverage.out
+
+# Mobile env (do not commit)
+mobile/.env
