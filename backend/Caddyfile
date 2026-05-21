@@ -1,0 +1,36 @@
+# Caddy reverse proxy for ai-image backend.
+# Replace {$DOMAIN} via env var at `docker compose up` time, or hardcode
+# your domain here (e.g., api.example.com).
+#
+# Auto-HTTPS via Let's Encrypt requires:
+#   1. Domain A/AAAA record points to this VPS public IP
+#   2. Ports 80 and 443 open in the VPS firewall
+#   3. {$ACME_EMAIL} env var set (used for Let's Encrypt registration)
+
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	# Reverse proxy to backend container
+	reverse_proxy backend:8080 {
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+
+	# Compression for JSON responses
+	encode gzip zstd
+
+	# Reasonable request size limit for image uploads (input photos are
+	# typically <5 MB; user uploads go directly to S3 via presigned URL,
+	# so backend only sees JSON metadata).
+	request_body {
+		max_size 2MB
+	}
+
+	# Basic access logging to stdout (docker logs picks it up)
+	log {
+		output stdout
+		format console
+	}
+}

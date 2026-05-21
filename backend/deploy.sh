@@ -1,53 +1,43 @@
 #!/usr/bin/env bash
-# Manual deploy script for Cloud Run.
-# Prerequisites: gcloud CLI installed and authenticated (gcloud auth login).
-# Required env vars (set in your shell or .env, NOT committed):
-#   GCP_PROJECT  - your Google Cloud project ID
-#   GCP_REGION   - asia-southeast1 (Singapore) recommended
-#   AR_REPO      - Artifact Registry repo name (default: ai-image)
+# VPS deploy helper for ai-image backend.
+#
+# Usage (from a workstation):
+#   ./deploy.sh user@vps.example.com /opt/ai-image
+#
+# Prerequisites on the VPS (one-time):
+#   - Docker + Docker Compose plugin installed
+#   - User in `docker` group
+#   - Directory created (e.g. /opt/ai-image) containing:
+#       * docker-compose.yml (copy of this repo's backend/docker-compose.yml)
+#       * Caddyfile          (copy of this repo's backend/Caddyfile)
+#       * .env               (production env vars; see backend/.env.example)
+#   - Domain DNS A/AAAA pointing to VPS public IP
+#   - Ports 80, 443 open in firewall
+#
+# What this script does:
+#   1. SSH into VPS
+#   2. cd into project dir
+#   3. docker compose pull   (pulls latest backend image from GHCR)
+#   4. docker compose up -d  (recreates containers with new image)
+#   5. docker compose ps     (shows status)
+#
+# Image is built and pushed by GitHub Actions on every push to main.
+# To deploy a specific commit, set BACKEND_IMAGE in .env on the VPS:
+#   BACKEND_IMAGE=ghcr.io/bimantara/ai-image-backend:abc1234
+
 set -euo pipefail
 
-: "${GCP_PROJECT:?GCP_PROJECT not set}"
-: "${GCP_REGION:=asia-southeast1}"
-: "${AR_REPO:=ai-image}"
+if [[ $# -lt 2 ]]; then
+	echo "Usage: $0 user@host /path/to/project/on/vps"
+	exit 1
+fi
 
-SERVICE=ai-image-backend
-IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT}/${AR_REPO}/${SERVICE}:$(git rev-parse --short HEAD)"
+REMOTE="$1"
+REMOTE_DIR="$2"
 
-echo "==> Building Docker image: ${IMAGE}"
-docker build --platform linux/amd64 -t "$IMAGE" .
+echo "==> Deploying to $REMOTE:$REMOTE_DIR"
 
-echo "==> Pushing to Artifact Registry"
-gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
-docker push "$IMAGE"
+ssh "$REMOTE" "cd $REMOTE_DIR && docker compose pull && docker compose up -d && docker compose ps"
 
-echo "==> Deploying to Cloud Run (region: ${GCP_REGION})"
-gcloud run deploy "$SERVICE" \
-  --image "$IMAGE" \
-  --region "$GCP_REGION" \
-  --platform managed \
-  --allow-unauthenticated \
-  --port 8080 \
-  --memory 512Mi \
-  --cpu 1 \
-  --min-instances 0 \
-  --max-instances 10 \
-  --timeout 300 \
-  --concurrency 80 \
-  --set-env-vars "ENV=production" \
-  --update-secrets "DATABASE_URL=database-url:latest,\
-SUPABASE_URL=supabase-url:latest,\
-SUPABASE_SERVICE_ROLE_KEY=supabase-service-role-key:latest,\
-SUPABASE_JWT_SECRET=supabase-jwt-secret:latest,\
-R2_ACCOUNT_ID=r2-account-id:latest,\
-R2_ACCESS_KEY_ID=r2-access-key-id:latest,\
-R2_SECRET_ACCESS_KEY=r2-secret-access-key:latest,\
-R2_BUCKET=r2-bucket:latest,\
-R2_PUBLIC_BASE_URL=r2-public-base-url:latest,\
-GEMINI_API_KEY=gemini-api-key:latest,\
-REPLICATE_API_TOKEN=replicate-api-token:latest,\
-REPLICATE_FLUX_VERSION=replicate-flux-version:latest,\
-SENTRY_DSN=sentry-dsn:latest"
-
-echo "==> Done. Service URL:"
-gcloud run services describe "$SERVICE" --region "$GCP_REGION" --format "value(status.url)"
+echo "==> Done. Tail logs with:"
+echo "   ssh $REMOTE 'cd $REMOTE_DIR && docker compose logs -f backend caddy'"

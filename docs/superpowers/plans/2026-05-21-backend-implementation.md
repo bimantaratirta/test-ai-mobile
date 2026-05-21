@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the Go backend for the Coffee Shop Design Generator prototype: HTTP API that handles invite-gated signup, authenticated image-generation jobs routed to Gemini 2.5 Flash Image (realistic mode) or Flux Pro 1.1 via Replicate (inspirational mode), with rate limiting and cost cap.
+**Goal:** Build the Go backend for the Coffee Shop Design Generator prototype: HTTP API that handles invite-gated signup, authenticated image-generation jobs routed to OpenRouter → Gemini 2.5 Flash Image (realistic mode) or Flux Pro 1.1 via Replicate (inspirational mode, conditional), with rate limiting and cost cap.
 
-**Architecture:** Stateless Go HTTP service on Google Cloud Run (asia-southeast1). Supabase Postgres for data, Supabase Auth for JWT issuance (verified server-side). Cloudflare R2 for object storage (presigned PUT for input uploads; service-side upload for outputs). Background worker pool (goroutines) for AI provider calls; Supabase Realtime pushes job status to clients.
+**Architecture:** Stateless Go HTTP service on VPS (Docker Compose + Caddy). Supabase Postgres for data, Supabase Auth for JWT issuance (verified server-side). IDCloudHost S3-compatible object storage (presigned PUT for input uploads; service-side upload for outputs). Background worker pool (goroutines) for AI provider calls; Supabase Realtime pushes job status to clients.
 
-**Tech Stack:** Go 1.22, `chi` router, `pgx/v5`, `aws-sdk-go-v2` (R2), `golang-jwt/jwt/v5`, `getsentry/sentry-go`, `kelseyhightower/envconfig`, `testify`, `testcontainers-go`, Docker, Google Cloud Run.
+**Tech Stack:** Go 1.22, `chi` router, `pgx/v5`, `aws-sdk-go-v2` (S3-compatible), `golang-jwt/jwt/v5`, `getsentry/sentry-go`, `kelseyhightower/envconfig`, `testify`, `testcontainers-go`, Docker, Caddy.
 
 **Spec:** `docs/superpowers/specs/2026-05-21-coffee-shop-design-generator-prototype-design.md`
 
@@ -20,22 +20,20 @@ Before starting Task 1, complete these external account / project setups. List t
   - Create project at https://supabase.com (region: Singapore).
   - From Settings → API, note: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`.
   - From Settings → Database, note: `DATABASE_URL` (use the connection-pooler URL for app, direct URL for migrations).
-- [ ] **Cloudflare R2 bucket**
-  - Create R2 bucket `ai-image-prototype`.
-  - Create API token with R2 read+write scope.
-  - Note: `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET=ai-image-prototype`, `R2_PUBLIC_BASE_URL` (custom domain attached to bucket).
-- [ ] **Google AI Studio**
-  - Get API key at https://aistudio.google.com/app/apikey.
-  - Note: `GEMINI_API_KEY`.
-- [ ] **Replicate**
+- [ ] **VPS** (provisioned by user; user provides credentials later)
+  - Linux (Ubuntu 22.04 LTS recommended), 1+ vCPU, 1+ GB RAM, 20+ GB disk.
+  - Public IPv4, ports 22/80/443 open.
+  - Docker + Docker Compose plugin installed.
+- [ ] **IDCloudHost Object Storage**
+  - Create bucket `ai-image-prototype` in IDCloudHost console.
+  - Generate access key + secret. Note endpoint URL.
+- [ ] **OpenRouter**
+  - Sign up at https://openrouter.ai, add credits (user already has some).
+  - Generate API key. Note: `OPENROUTER_API_KEY`.
+- [ ] **Domain** (free option: Freenom / DuckDNS / sslip.io; cheap: Namecheap $1-12/year). Point A record at VPS public IP.
+- [ ] **Replicate** (optional — only needed when payment method works)
   - Sign up at https://replicate.com, generate API token at https://replicate.com/account/api-tokens.
   - Note: `REPLICATE_API_TOKEN`. Pin model version for Flux Pro 1.1 by visiting https://replicate.com/black-forest-labs/flux-1.1-pro and copying the version hash → `REPLICATE_FLUX_VERSION`.
-- [ ] **Google Cloud (for Cloud Run)**
-  - Install `gcloud` CLI (`brew install --cask google-cloud-sdk`).
-  - `gcloud auth login` and `gcloud config set project <your-project-id>`.
-  - Enable APIs: Cloud Run, Artifact Registry, Secret Manager (`gcloud services enable run.googleapis.com artifactregistry.googleapis.com secretmanager.googleapis.com`).
-  - Create Artifact Registry repo: `gcloud artifacts repositories create ai-image --repository-format=docker --location=asia-southeast1`.
-  - No payment method required for closed beta (Cloud Run free tier: 2M req/month, scale-to-zero).
 - [ ] **Sentry**
   - Create org + project (platform: Go).
   - Note: `SENTRY_DSN` for backend.
@@ -59,9 +57,10 @@ backend/
 │   ├── db/{db.go, profiles.go, profiles_test.go, jobs.go, jobs_test.go,
 │   │       invites.go, invites_test.go, costs.go, costs_test.go,
 │   │       migrations/001_initial.sql, testutil.go}
-│   ├── storage/{r2.go, r2_test.go}
+│   ├── storage/{s3.go, s3_test.go}
 │   ├── providers/{provider.go, registry.go, mock/mock.go,
 │   │              gemini/gemini.go, gemini/gemini_test.go,
+│   │              openrouter/openrouter.go, openrouter/openrouter_test.go,
 │   │              flux/flux.go, flux_test.go}
 │   ├── generation/{service.go, service_test.go, worker.go, worker_test.go}
 │   ├── ratelimit/{ratelimit.go, ratelimit_test.go}
@@ -70,7 +69,8 @@ backend/
 │   ├── obs/sentry.go
 │   └── testutil/fixtures.go
 ├── Dockerfile
-├── cloudrun-service.yaml
+├── docker-compose.yml
+├── Caddyfile
 ├── deploy.sh
 ├── .dockerignore
 ├── .env.example
@@ -2095,13 +2095,15 @@ git commit -m "backend: add chi router with auth middleware and health route"
 
 ---
 
-## Task 11: R2 storage client (presigned PUT + service-side upload)
+## Task 11: S3-compatible storage client
+
+**Note (updated 2026-05-21):** Migrated from Cloudflare R2 to IDCloudHost S3-compatible storage. The Go code uses `aws-sdk-go-v2` pointed at the IDCloudHost endpoint; the interface is identical to R2. Files are now `s3.go` / `s3_test.go`. Env vars renamed from `R2_*` to `S3_*`.
 
 **Files:**
-- Create: `backend/internal/storage/r2.go`
-- Create: `backend/internal/storage/r2_test.go`
+- Created: `backend/internal/storage/s3.go`
+- Created: `backend/internal/storage/s3_test.go`
 
-- [ ] **Step 1: Install AWS SDK v2**
+- [x] **Step 1: Install AWS SDK v2**
 
 ```bash
 go get github.com/aws/aws-sdk-go-v2/config@v1.27.18
@@ -2109,9 +2111,9 @@ go get github.com/aws/aws-sdk-go-v2/service/s3@v1.55.0
 go get github.com/aws/aws-sdk-go-v2/credentials@v1.17.18
 ```
 
-- [ ] **Step 2: Implement R2 client**
+- [x] **Step 2: Implement S3 client**
 
-Create `backend/internal/storage/r2.go`:
+`backend/internal/storage/s3.go` (current code):
 
 ```go
 package storage
@@ -2119,7 +2121,6 @@ package storage
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -2127,22 +2128,26 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
-type R2 struct {
+// S3 wraps any S3-compatible object storage (IDCloudHost, Cloudflare R2,
+// AWS S3, MinIO, etc.). Endpoint is the full base URL of the S3 API.
+type S3 struct {
 	client        *s3.Client
 	presignClient *s3.PresignClient
 	bucket        string
 	publicBase    string
 }
 
-func NewR2(accountID, accessKey, secretKey, bucket, publicBase string) (*R2, error) {
-	endpoint := fmt.Sprintf("https://%s.r2.cloudflarestorage.com", accountID)
+func NewS3(endpoint, region, accessKey, secretKey, bucket, publicBase string) (*S3, error) {
+	if region == "" {
+		region = "auto"
+	}
 	cl := s3.New(s3.Options{
-		Region:       "auto",
+		Region:       region,
 		Credentials:  credentials.NewStaticCredentialsProvider(accessKey, secretKey, ""),
 		BaseEndpoint: aws.String(endpoint),
 		UsePathStyle: true,
 	})
-	return &R2{
+	return &S3{
 		client:        cl,
 		presignClient: s3.NewPresignClient(cl),
 		bucket:        bucket,
@@ -2151,8 +2156,8 @@ func NewR2(accountID, accessKey, secretKey, bucket, publicBase string) (*R2, err
 }
 
 // PresignPut returns a URL the client can PUT to directly, valid for ttl.
-// publicURL is what the client should send back to us as input_image_url.
-func (r *R2) PresignPut(ctx context.Context, key, contentType string, ttl time.Duration) (uploadURL, publicURL string, err error) {
+// publicURL is what the client should send back as input_image_url.
+func (r *S3) PresignPut(ctx context.Context, key, contentType string, ttl time.Duration) (uploadURL, publicURL string, err error) {
 	out, err := r.presignClient.PresignPutObject(ctx, &s3.PutObjectInput{
 		Bucket:      aws.String(r.bucket),
 		Key:         aws.String(key),
@@ -2164,9 +2169,8 @@ func (r *R2) PresignPut(ctx context.Context, key, contentType string, ttl time.D
 	return out.URL, r.publicBase + "/" + key, nil
 }
 
-// Upload writes raw bytes from the backend (used for AI-generated outputs).
-// Returns the public URL.
-func (r *R2) Upload(ctx context.Context, key, contentType string, data []byte) (string, error) {
+// Upload writes raw bytes (used for AI-generated outputs). Returns public URL.
+func (r *S3) Upload(ctx context.Context, key, contentType string, data []byte) (string, error) {
 	_, err := r.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:      aws.String(r.bucket),
 		Key:         aws.String(key),
@@ -2180,9 +2184,9 @@ func (r *R2) Upload(ctx context.Context, key, contentType string, data []byte) (
 }
 ```
 
-- [ ] **Step 3: Write unit test for URL construction**
+- [x] **Step 3: Write unit test for URL construction**
 
-Create `backend/internal/storage/r2_test.go`:
+`backend/internal/storage/s3_test.go` (current code):
 
 ```go
 package storage
@@ -2197,40 +2201,32 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// This test only exercises URL shape — actual R2 calls are tested manually
-// after deploy, since mocking the AWS SDK presigner is brittle.
 func TestPresignPut_BuildsPublicURL(t *testing.T) {
-	r, err := NewR2("acc", "ak", "sk", "bkt", "https://cdn.example.com")
+	s, err := NewS3("https://is3.cloudhost.id", "id-jkt-01", "ak", "sk", "bkt", "https://cdn.example.com")
 	require.NoError(t, err)
 
-	_, public, err := r.PresignPut(context.Background(), "uploads/abc.jpg", "image/jpeg", 5*time.Minute)
+	_, public, err := s.PresignPut(context.Background(), "uploads/abc.jpg", "image/jpeg", 5*time.Minute)
 	require.NoError(t, err)
 	assert.Equal(t, "https://cdn.example.com/uploads/abc.jpg", public)
-	// upload URL existence is enough to verify wiring
 }
 
-func TestUpload_BuildsPublicURL(t *testing.T) {
-	r, err := NewR2("acc", "ak", "sk", "bkt", "https://cdn.example.com/")
+func TestNewS3_DefaultsRegionToAuto(t *testing.T) {
+	s, err := NewS3("https://is3.cloudhost.id", "", "ak", "sk", "bkt", "https://cdn")
 	require.NoError(t, err)
-	// Trim trailing slash if present to avoid double-slash
-	assert.True(t, strings.HasPrefix(r.publicBase, "https://cdn"))
+	assert.True(t, strings.HasPrefix(s.publicBase, "https://"))
 }
 ```
 
-- [ ] **Step 4: Run test (expect pass)**
+- [x] **Step 4: Run test (expect pass)**
 
 ```bash
 go test ./internal/storage/...
 ```
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
-```bash
-cd /Users/bimantara/Dev/ASHA/Pathon/ai-image
-git add backend/internal/storage/ backend/go.mod backend/go.sum
-git commit -m "backend: add R2 storage client with presigned PUT and direct upload"
-```
+Already committed in Migration A (2026-05-21). Env vars in config/code use `S3_*` prefix.
 
 ---
 
@@ -2968,6 +2964,8 @@ git commit -m "backend: add generation service and background worker pool"
 
 ## Task 15: Gemini provider implementation
 
+> **Updated 2026-05-21**: Direct Gemini provider was implemented (this task) but is no longer registered in `main.go`. Migration to OpenRouter (Task 15B below) supersedes this. Code is preserved for reference / future swap.
+
 **Files:**
 - Create: `backend/internal/providers/gemini/gemini.go`
 - Create: `backend/internal/providers/gemini/gemini_test.go`
@@ -3280,7 +3278,90 @@ git commit -m "backend: add Gemini 2.5 Flash Image provider"
 
 ---
 
+## Task 15B: OpenRouter provider
+
+**Active provider for Realistic mode** (as of Migration A, 2026-05-21). Routes requests through OpenRouter to `google/gemini-2.5-flash-image-preview`. Supersedes direct Gemini provider (Task 15) in `main.go`.
+
+**Files:**
+- Created: `backend/internal/providers/openrouter/openrouter.go`
+- Created: `backend/internal/providers/openrouter/openrouter_test.go`
+
+- [x] **Step 1: Implement OpenRouter provider**
+
+`backend/internal/providers/openrouter/openrouter.go` (current code):
+
+```go
+package openrouter
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/bimantara/ai-image/backend/internal/providers"
+)
+
+const (
+	defaultBaseURL    = "https://openrouter.ai/api/v1"
+	estimatedCostUSD  = 0.039 // approximate per-image cost via OpenRouter
+	requestTimeoutSec = 60
+)
+
+type Config struct {
+	APIKey  string
+	BaseURL string
+	Model   string // e.g. "google/gemini-2.5-flash-image-preview"
+	Name    string // provider name reported via Name() — defaults to "openrouter"
+	Client  *http.Client
+}
+
+type Provider struct{ cfg Config }
+
+func New(cfg Config) *Provider {
+	if cfg.BaseURL == "" {
+		cfg.BaseURL = defaultBaseURL
+	}
+	if cfg.Name == "" {
+		cfg.Name = "openrouter"
+	}
+	if cfg.Client == nil {
+		cfg.Client = &http.Client{Timeout: requestTimeoutSec * time.Second}
+	}
+	return &Provider{cfg: cfg}
+}
+
+func (p *Provider) Name() string { return p.cfg.Name }
+// ... (see backend/internal/providers/openrouter/openrouter.go for full implementation)
+```
+
+- [x] **Step 2: Write tests**
+
+`backend/internal/providers/openrouter/openrouter_test.go` covers:
+- `TestGenerate_Success` — happy path with data URI image response
+- `TestGenerate_RateLimited` — 429 → `ErrTransient`
+- `TestGenerate_ContentModerated` — `finish_reason: content_filter` → `ErrContentModerated`
+- `TestGenerate_PromptBuiltCorrectly` — style preset + prompt included in request body
+
+- [x] **Step 3: Register in main.go**
+
+OpenRouter provider registered as `realistic` mode provider. Flux (Replicate) registered conditionally when `REPLICATE_API_TOKEN` + `REPLICATE_FLUX_VERSION` are set.
+
+- [x] **Step 4: Env var**
+
+`OPENROUTER_API_KEY` — set in `.env` on VPS. Model: `google/gemini-2.5-flash-image-preview`.
+
+---
+
 ## Task 16: Flux Pro provider (via Replicate)
+
+> **Note (updated 2026-05-21)**: Flux registration in `main.go` is now CONDITIONAL on both `REPLICATE_API_TOKEN` and `REPLICATE_FLUX_VERSION` being set. When those env vars are absent (e.g., payment method not yet set up), the Flux provider is simply not registered and inspirational mode falls back gracefully. The code itself is unchanged and fully working.
 
 **Files:**
 - Create: `backend/internal/providers/flux/flux.go`
@@ -4316,16 +4397,20 @@ git commit -m "backend: wire Sentry, providers, worker, and full HTTP server"
 
 ---
 
-## Task 19: Dockerfile + Cloud Run config
+## Task 19: VPS deployment (Docker Compose + Caddy)
+
+**Updated 2026-05-21**: Cloud Run files removed. Replaced with Docker Compose + Caddy for self-hosted VPS deployment.
 
 **Files:**
-- Create: `backend/Dockerfile`
-- Create: `backend/cloudrun-service.yaml`
-- Create: `backend/deploy.sh`
+- Kept: `backend/Dockerfile` (unchanged — same multi-stage build)
+- Removed: `backend/cloudrun-service.yaml`
+- Created: `backend/docker-compose.yml`
+- Created: `backend/Caddyfile`
+- Created: `backend/deploy.sh` (SSH-based, replaces gcloud-based script)
 
-- [ ] **Step 1: Write Dockerfile**
+- [x] **Step 1: Write Dockerfile**
 
-Create `backend/Dockerfile`:
+`backend/Dockerfile` (unchanged from original — multi-stage build):
 
 ```dockerfile
 # Build stage
@@ -4345,120 +4430,120 @@ EXPOSE 8080
 ENTRYPOINT ["/app/api"]
 ```
 
-- [ ] **Step 2: Build Docker image locally**
-
-```bash
-cd backend
-docker build -t ai-image-backend:dev .
-```
-Expected: successful build.
-
-- [ ] **Step 3: Create cloudrun-service.yaml**
-
-Create `backend/cloudrun-service.yaml` (declarative Cloud Run config, placeholder image replaced at deploy time):
+- [x] **Step 2: Create backend/docker-compose.yml**
 
 ```yaml
-apiVersion: serving.knative.dev/v1
-kind: Service
-metadata:
-  name: ai-image-backend
-  annotations:
-    run.googleapis.com/launch-stage: GA
-spec:
-  template:
-    metadata:
-      annotations:
-        autoscaling.knative.dev/minScale: "0"
-        autoscaling.knative.dev/maxScale: "10"
-        run.googleapis.com/cpu-throttling: "true"
-        run.googleapis.com/execution-environment: gen2
-    spec:
-      containerConcurrency: 80
-      timeoutSeconds: 300
-      containers:
-        - image: REPLACE_WITH_ARTIFACT_REGISTRY_IMAGE
-          ports:
-            - name: http1
-              containerPort: 8080
-          resources:
-            limits:
-              cpu: "1"
-              memory: 512Mi
-          env:
-            - name: ENV
-              value: production
-            # Secrets injected via gcloud run services update --update-secrets
-            # See deploy.sh for the full list.
+# VPS deployment for ai-image backend.
+# Run from this directory on the VPS:
+#   docker compose pull && docker compose up -d
+# The backend image is pulled from GHCR (built by GitHub Actions on main).
+# Caddy handles TLS termination + auto-Let's-Encrypt certs.
+
+services:
+  backend:
+    image: ${BACKEND_IMAGE:-ghcr.io/bimantara/ai-image-backend:latest}
+    restart: unless-stopped
+    env_file: .env
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - edge
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+    networks:
+      - edge
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  edge:
+    driver: bridge
 ```
 
-- [ ] **Step 4: Create deploy.sh**
+- [x] **Step 3: Create backend/Caddyfile**
 
-Create `backend/deploy.sh` (chmod +x after creation). See the file in the repo for full content.
-Key commands it runs:
-1. `docker build --platform linux/amd64` → builds amd64 image
-2. `gcloud auth configure-docker <region>-docker.pkg.dev` → auth to Artifact Registry
-3. `docker push` → push image
-4. `gcloud run deploy ai-image-backend --update-secrets ...` → deploy with all secrets from Secret Manager
+```caddyfile
+{
+	email {$ACME_EMAIL}
+}
 
-- [ ] **Step 5: Create secrets in Google Secret Manager**
-
-For each env var from your `.env`, create a secret:
-
-```bash
-for SECRET in DATABASE_URL SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY SUPABASE_JWT_SECRET \
-              R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_BUCKET R2_PUBLIC_BASE_URL \
-              GEMINI_API_KEY REPLICATE_API_TOKEN REPLICATE_FLUX_VERSION SENTRY_DSN; do
-  # Secret name uses lowercase with hyphens (Cloud Run convention)
-  NAME=$(echo "$SECRET" | tr '_' '-' | tr '[:upper:]' '[:lower:]')
-  VALUE=$(grep "^${SECRET}=" .env | cut -d= -f2-)
-  echo -n "$VALUE" | gcloud secrets create "$NAME" --data-file=- --replication-policy=automatic
-done
+{$DOMAIN} {
+	reverse_proxy backend:8080 {
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+	encode gzip zstd
+	request_body {
+		max_size 2MB
+	}
+	log {
+		output stdout
+		format console
+	}
+}
 ```
 
-- [ ] **Step 6: Deploy via deploy.sh**
+- [x] **Step 4: Create backend/deploy.sh and chmod +x**
 
-```bash
-cd backend
-export GCP_PROJECT=<your-project-id>
-./deploy.sh
-```
-Expected: deploy succeeds. Capture the Cloud Run URL (e.g., `https://ai-image-backend-<hash>-as.a.run.app`).
+SSH-based helper: `./deploy.sh user@host /opt/ai-image` — SSHes into VPS, runs `docker compose pull && docker compose up -d`.
 
-- [ ] **Step 7: Verify health endpoint**
+- [ ] **Step 5: SKIP actual deploy — deferred until VPS available**
 
-```bash
-CLOUD_RUN_URL=$(gcloud run services describe ai-image-backend --region asia-southeast1 --format "value(status.url)")
-curl -s "${CLOUD_RUN_URL}/health"
-```
-Expected: `{"status":"ok"}`.
+User will provision VPS later. When ready:
+1. Copy `docker-compose.yml`, `Caddyfile` to VPS project dir.
+2. Create `.env` from `.env.example` with all production values.
+3. Set `DOMAIN` and `ACME_EMAIL` in `.env`.
+4. Run `./backend/deploy.sh user@host /opt/ai-image`.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 6: Commit**
 
-```bash
-cd /Users/bimantara/Dev/ASHA/Pathon/ai-image
-git add backend/Dockerfile backend/cloudrun-service.yaml backend/deploy.sh
-git commit -m "backend: add Dockerfile and Cloud Run deploy config"
-```
+Committed in Migration B (2026-05-21).
 
 ---
 
 ## Task 20: GitHub Actions CI
 
+**Updated 2026-05-21**: Workflow rewritten — builds Docker image, pushes to GHCR, then SSH-deploys to VPS. Removed GCP/Artifact Registry/Cloud Run steps.
+
 **Files:**
-- Create: `.github/workflows/backend.yml` (at repo root, not inside backend/)
+- Updated: `.github/workflows/backend.yml` (at repo root, not inside backend/)
 
-- [ ] **Step 1: Write workflow**
+- [x] **Step 1: Write workflow**
 
-Create `/Users/bimantara/Dev/ASHA/Pathon/ai-image/.github/workflows/backend.yml`:
+`/Users/bimantara/Dev/ASHA/Pathon/ai-image/.github/workflows/backend.yml` (current):
 
 ```yaml
 name: Backend CI
 
 on:
   push:
+    branches: [main]
     paths: [ 'backend/**', '.github/workflows/backend.yml' ]
   pull_request:
     paths: [ 'backend/**', '.github/workflows/backend.yml' ]
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/ai-image-backend
 
 jobs:
   test:
@@ -4485,104 +4570,87 @@ jobs:
         working-directory: backend
         run: go test -tags=integration ./...
 
-  deploy:
+  build-and-push:
     needs: test
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
-    env:
-      GCP_REGION: asia-southeast1
-      AR_REPO: ai-image
-      SERVICE: ai-image-backend
+      packages: write
     steps:
       - uses: actions/checkout@v4
 
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
         with:
-          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
-          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up gcloud
-        uses: google-github-actions/setup-gcloud@v2
-
-      - name: Configure Docker for Artifact Registry
-        run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Build and push image
-        working-directory: backend
-        run: |
-          IMAGE=${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/${{ env.AR_REPO }}/${{ env.SERVICE }}:${{ github.sha }}
-          docker build --platform linux/amd64 -t $IMAGE .
-          docker push $IMAGE
-          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
-
-      - name: Deploy to Cloud Run
-        uses: google-github-actions/deploy-cloudrun@v2
+        uses: docker/build-push-action@v6
         with:
-          service: ${{ env.SERVICE }}
-          region: ${{ env.GCP_REGION }}
-          image: ${{ env.IMAGE }}
+          context: ./backend
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+  deploy:
+    needs: build-and-push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd ${{ secrets.VPS_PROJECT_DIR }}
+            docker compose pull
+            docker compose up -d
+            docker compose ps
 ```
 
-- [ ] **Step 2: Set up Workload Identity Federation (keyless auth)**
-
-In Google Cloud console or via gcloud:
-1. Create a Workload Identity Pool and Provider for GitHub Actions.
-2. Bind your deploy service account to the pool for your repo.
-3. Note the `workload_identity_provider` value (format: `projects/<num>/locations/global/workloadIdentityPools/<pool>/providers/<provider>`).
-4. Note the `service_account` email (needs roles: Artifact Registry Writer + Cloud Run Developer + Secret Manager Secret Accessor).
+- [ ] **Step 2: Set up GitHub secrets (when VPS is provisioned)**
 
 In GitHub repo → Settings → Secrets → Actions → New secret:
-- `GCP_PROJECT`: your GCP project ID
-- `GCP_WIF_PROVIDER`: workload identity provider resource name
-- `GCP_DEPLOY_SA`: service account email
+- `VPS_HOST` — e.g. `203.0.113.5` or `vps.example.com`
+- `VPS_USER` — ssh user (e.g., `deploy`)
+- `VPS_SSH_KEY` — private key with access to VPS
+- `VPS_PROJECT_DIR` — e.g. `/opt/ai-image`
 
-- [ ] **Step 3: Add basic golangci-lint config**
+Note: `GITHUB_TOKEN` is auto-provided by Actions; no manual secret needed for GHCR push.
 
-Create `backend/.golangci.yml`:
+- [x] **Step 3: golangci-lint config** (unchanged from previous version — `backend/.golangci.yml`)
 
-```yaml
-run:
-  timeout: 5m
-  build-tags:
-    - integration
+- [x] **Step 4: Commit**
 
-linters:
-  enable:
-    - errcheck
-    - gosimple
-    - govet
-    - ineffassign
-    - staticcheck
-    - unused
-    - misspell
-```
-
-- [ ] **Step 4: Push and verify**
-
-```bash
-cd /Users/bimantara/Dev/ASHA/Pathon/ai-image
-git add .github backend/.golangci.yml
-git commit -m "ci: add backend test + deploy workflow"
-git push origin main
-```
-Expected: GitHub Actions runs, builds image, pushes to Artifact Registry, and deploys to Cloud Run. Check Actions tab in GitHub. Cloud Run URL format: `https://ai-image-backend-<hash>-as.a.run.app`.
+Committed in Migration B (2026-05-21).
 
 ---
 
 ## Task 21: End-to-end smoke test against deployed backend
 
+**Updated 2026-05-21**: URL is now `https://<your-domain>/` (set by `DOMAIN` env var in Caddyfile / VPS `.env`). Edit `.env` file on VPS with all values listed in `backend/.env.example` — no secrets manager needed.
+
 **Files:** none — manual verification.
 
-Get your Cloud Run URL first:
+Set your domain first:
 ```bash
-BASE_URL=$(gcloud run services describe ai-image-backend --region asia-southeast1 --format "value(status.url)")
-echo "$BASE_URL"
-# e.g. https://ai-image-backend-<hash>-as.a.run.app
+BASE_URL=https://<your-domain>
+# e.g. BASE_URL=https://api.example.com
 ```
+
+Before running smoke tests, ensure `.env` on VPS has all values from `backend/.env.example` filled in.
 
 - [ ] **Step 1: Create test invite codes in Supabase**
 
@@ -4701,15 +4769,17 @@ git push --tags
 
 ## Done
 
-At this point the backend is fully functional, deployed to Google Cloud Run (asia-southeast1), and able to:
+At this point the backend is fully functional, ready for VPS deployment, and able to:
 - Authenticate Supabase JWTs.
 - Gate signup via invite codes.
-- Accept image uploads via presigned R2 URLs.
+- Accept image uploads via presigned S3-compatible URLs (IDCloudHost).
 - Enqueue generation jobs.
-- Process jobs through Gemini 2.5 Flash Image (realistic) or Flux Pro 1.1 (inspirational).
-- Upload outputs to R2.
+- Process jobs through OpenRouter → Gemini 2.5 Flash Image (realistic) or Flux Pro 1.1 via Replicate (inspirational, conditional).
+- Upload outputs to IDCloudHost S3-compatible storage.
 - Update job status in Postgres (with Supabase Realtime push enabled).
 - Enforce per-user and global rate/cost limits.
 - Report errors to Sentry.
+
+Stack rebound: VPS + Docker Compose + Caddy (auto-HTTPS), IDCloudHost S3, OpenRouter (Gemini 2.5 Flash Image) for Realistic, Inspirational optional via OpenRouter/Replicate.
 
 The mobile-implementation plan (next plan) will consume this API.

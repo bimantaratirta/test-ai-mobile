@@ -69,8 +69,9 @@ Recruited manually via personal network, WhatsApp, and a single Twitter/IG post.
 ```
 ┌─────────────────┐         ┌──────────────────────┐         ┌─────────────────────┐
 │  Flutter App    │ HTTPS   │   Go Backend         │         │  AI Providers       │
-│  (iOS/Android)  │ ──────► │   Cloud Run          │ ──────► │  • Gemini 2.5 Flash │
-│                 │         │   (asia-southeast1)  │         │    Image (realistic)│
+│  (iOS/Android)  │ ──────► │   VPS (Docker)       │ ──────► │  • OpenRouter →     │
+│                 │         │   Caddy reverse proxy│         │    Gemini 2.5 Flash │
+│                 │         │                      │         │    Image (realistic)│
 │                 │         │                      │         │                     │
 │  • Auth         │ ◄────── │  • JWT verify        │ ◄────── │  • Flux Pro 1.1     │
 │  • Capture      │   JSON  │  • Rate limit        │         │    via Replicate    │
@@ -78,10 +79,9 @@ Recruited manually via personal network, WhatsApp, and a single Twitter/IG post.
 │  • Realtime     │         │  • Cost guard        │         └─────────────────────┘
 │  • Gallery      │         │  • Job worker pool   │
 └─────────────────┘         └──────────┬───────────┘         ┌─────────────────────┐
-                                       │                     │  Cloudflare R2      │
-                                       │             ──────► │  (S3-compatible,    │
-                                       │                     │   free egress,      │
-                                       │                     │   global CDN)       │
+                                       │                     │  IDCloudHost        │
+                                       │             ──────► │  Object Storage     │
+                                       │                     │  (S3-compatible)    │
                                        ▼                     └─────────────────────┘
                             ┌──────────────────────┐
                             │  Supabase            │
@@ -93,9 +93,9 @@ Recruited manually via personal network, WhatsApp, and a single Twitter/IG post.
                             └──────────────────────┘
 ```
 
-**Why Google Cloud Run (asia-southeast1)**: low latency to Indonesia (~10ms), reasonable to other Asian beta users, scale-to-zero with free tier (2M req/month) covers the entire closed beta at $0/month, easy multi-region expansion later.
+**Why VPS (Docker Compose + Caddy)**: Cloud Run requires a billing account (credit card) that user couldn't add. VPS gives full control with predictable cost, runs Docker container same as Cloud Run would. Caddy handles auto-HTTPS via Let's Encrypt. Trade-off: manual provisioning + maintenance, but full ownership of the stack. Region: wherever the VPS is provisioned (Indonesia preferred, Singapore second).
 
-**Why R2 over Supabase Storage**: free egress means image delivery doesn't surprise the cost ceiling; built-in CDN keeps results fast globally.
+**Why IDCloudHost Object Storage (S3-compatible)**: Cloudflare R2 requires a credit card. IDCloudHost accepts bank transfer (Indonesia-friendly), has S3-compatible API so the Go aws-sdk-go-v2 code is unchanged — just point to their endpoint. Trade-off: no global CDN built-in (R2 has it for free); add Cloudflare in front later if delivery speed becomes an issue. For closed beta with mostly Indonesian users, latency is fine.
 
 **Why Supabase**: bundles Postgres + Auth + Realtime, generous free tier covers entire beta. Realtime is critical for pushing job status updates without polling.
 
@@ -124,13 +124,13 @@ Recruited manually via personal network, WhatsApp, and a single Twitter/IG post.
 - **Config**: env vars via `kelseyhightower/envconfig`
 
 ### Infrastructure
-- **Backend hosting**: Google Cloud Run (single region: `asia-southeast1`)
+- **Backend hosting**: VPS (Linux + Docker Compose + Caddy reverse proxy with auto-HTTPS via Let's Encrypt)
 - **Database & Auth**: Supabase (free tier, region: Singapore)
-- **Object storage**: Cloudflare R2 + Cloudflare CDN
+- **Object storage**: IDCloudHost Object Storage (S3-compatible)
 - **AI providers**:
-  - Google AI Studio (Gemini 2.5 Flash Image)
-  - Replicate (Flux Pro 1.1)
-- **CI/CD**: GitHub Actions
+  - OpenRouter (`google/gemini-2.5-flash-image-preview` for Realistic mode; configurable second model for Inspirational)
+  - Replicate (Flux Pro 1.1) — optional, only enabled when payment method available
+- **CI/CD**: GitHub Actions (build & push image to GHCR, SSH deploy to VPS)
 - **Mobile distribution**: TestFlight (iOS) + Google Play Internal Testing (Android)
 
 ## Database Schema
@@ -324,19 +324,19 @@ All backend errors logged to Sentry with `user_id`, `job_id`, `request_id`. Flut
 
 ### CI/CD
 - **GitHub Actions** workflows:
-  - `backend.yml`: `go test`, `golangci-lint`, build Docker, push to Artifact Registry, deploy to Cloud Run.
+  - `backend.yml`: `go test`, `golangci-lint`, build Docker, push to GHCR, SSH deploy to VPS.
   - `mobile.yml`: `flutter analyze`, `flutter test`, build APK + IPA on tag.
 - Branch protection: tests must pass before merge to `main`.
 
 ## Deployment
 
 ### Backend
-- Dockerfile multi-stage build (small final image).
-- Google Cloud Run: 1 region (`asia-southeast1`), 512MB memory, 1 vCPU, scale-to-zero enabled (min 0, max 10 instances).
-- Postgres on Supabase (free tier).
-- Secrets stored in Google Secret Manager; injected at deploy time via `gcloud run deploy --update-secrets` (Gemini key, Replicate key, R2 creds, Supabase service role key, Sentry DSN).
-- Manual deploys: `backend/deploy.sh` (requires `GCP_PROJECT` env var and `gcloud auth login`).
-- CI/CD: GitHub Actions using Workload Identity Federation (keyless auth); requires GitHub secrets `GCP_PROJECT`, `GCP_WIF_PROVIDER`, `GCP_DEPLOY_SA`.
+- VPS provisioned with Linux (Ubuntu 22.04 recommended), Docker + Docker Compose plugin.
+- Project directory on VPS (e.g., `/opt/ai-image/`) contains: `docker-compose.yml`, `Caddyfile`, `.env`.
+- Domain DNS A record → VPS public IP. Ports 80 + 443 open.
+- Manual deploy: `./backend/deploy.sh user@host /opt/ai-image`
+- Automated deploy: GitHub Actions builds image → pushes to GHCR → SSHs into VPS → `docker compose pull && docker compose up -d`.
+- TLS certs auto-managed by Caddy (Let's Encrypt).
 
 ### Mobile
 - **iOS**: TestFlight build. Manual Xcode signing or Fastlane. **Requires Apple Developer Program** ($99/year).
@@ -359,7 +359,7 @@ Once beta validates the product, the rebuild adds:
 - **Subscription via RevenueCat** — paywall, webhook handling, entitlement caching.
 - **Public release** to App Store + Play Store with subscription tiers.
 - **Localization** — Indonesian + English.
-- **Multi-region backend** (Cloud Run: asia-southeast1 + us-east1 + europe-west1) for global latency.
+- **Multi-region backend** (initially: scale VPS vertically, then migrate to Fly.io / Cloud Run multi-region once payment method is available)
 - **Production observability** — Grafana Cloud / similar, full metrics dashboard.
 - **Cost guard per user per day** (replaces beta's simple counter).
 - **Subscription state reconciliation cron** (handles webhook losses).
@@ -370,7 +370,7 @@ Once beta validates the product, the rebuild adds:
 - All backend providers + abstraction.
 - Job schema + worker pool (add subscription gate).
 - Flutter capture / compose / gallery modules.
-- R2 storage layer.
+- S3-compatible storage layer (swap endpoint to R2/S3 when payment available).
 - Auth flow (Supabase).
 
 **Discarded / rebuilt**:
@@ -384,3 +384,4 @@ Once beta validates the product, the rebuild adds:
 - Should we generate from a 3D layout instead of a single photo? (More setup but better fidelity.)
 - Is "Inspirational" mode actually used, or do users overwhelmingly prefer "Realistic"? (Drives whether we keep both.)
 - What style presets get used most? (Drives the preset list in mature version.)
+- Will IDCloudHost storage egress / latency suffice for non-Indonesia beta users? If yes, keep through mature version. If no, layer Cloudflare CDN in front of IDCloudHost bucket OR migrate to R2/S3 once payment works.

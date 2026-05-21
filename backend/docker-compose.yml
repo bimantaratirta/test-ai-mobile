@@ -1,0 +1,46 @@
+# VPS deployment for ai-image backend.
+# Run from this directory on the VPS:
+#   docker compose pull && docker compose up -d
+# The backend image is pulled from GHCR (built by GitHub Actions on main).
+# Caddy handles TLS termination + auto-Let's-Encrypt certs.
+
+services:
+  backend:
+    image: ${BACKEND_IMAGE:-ghcr.io/bimantara/ai-image-backend:latest}
+    restart: unless-stopped
+    env_file: .env
+    expose:
+      - "8080"
+    # No public ports — Caddy is the only edge.
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - edge
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+    networks:
+      - edge
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  edge:
+    driver: bridge
