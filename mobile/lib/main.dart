@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'app.dart';
 import 'config/env.dart';
+import 'core/obs/sentry.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -12,5 +13,5 @@ Future<void> main() async {
     url: Env.supabaseUrl,
     anonKey: Env.supabaseAnonKey,
   );
-  runApp(const ProviderScope(child: App()));
+  await initSentryAndRun(const ProviderScope(child: App()));
 }
