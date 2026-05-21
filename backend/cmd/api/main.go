@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/bimantara/ai-image/backend/internal/config"
+	"github.com/bimantara/ai-image/backend/internal/db"
 )
 
 func main() {
@@ -23,6 +24,16 @@ func main() {
 		slog.Error("config load failed", "err", err)
 		os.Exit(1)
 	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	database, err := db.New(ctx, cfg.DatabaseURL)
+	if err != nil {
+		slog.Error("db init failed", "err", err)
+		os.Exit(1)
+	}
+	defer database.Close()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
@@ -43,9 +54,9 @@ func main() {
 		sigint := make(chan os.Signal, 1)
 		signal.Notify(sigint, syscall.SIGINT, syscall.SIGTERM)
 		<-sigint
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if err := srv.Shutdown(ctx); err != nil {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer shutdownCancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
 			slog.Error("graceful shutdown failed", "err", err)
 		}
 		close(idleConnsClosed)
