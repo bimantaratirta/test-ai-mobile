@@ -81,5 +81,9 @@ create policy jobs_self_select on jobs
 
 -- Invites and daily_costs: no client access. Service role bypasses RLS.
 
--- Enable Realtime on jobs so Flutter can subscribe
-alter publication supabase_realtime add table jobs;
+-- Enable Realtime on jobs so Flutter can subscribe.
+-- Idempotent: Supabase may auto-include new tables in the publication;
+-- swallow the "already member" duplicate_object error (SQLSTATE 42710).
+do $$ begin
+  alter publication supabase_realtime add table jobs;
+exception when duplicate_object then null; end $$;
