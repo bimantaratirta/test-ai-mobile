@@ -4,9 +4,9 @@
 
 **Goal:** Build the Go backend for the Coffee Shop Design Generator prototype: HTTP API that handles invite-gated signup, authenticated image-generation jobs routed to Gemini 2.5 Flash Image (realistic mode) or Flux Pro 1.1 via Replicate (inspirational mode), with rate limiting and cost cap.
 
-**Architecture:** Stateless Go HTTP service on Fly.io Singapore. Supabase Postgres for data, Supabase Auth for JWT issuance (verified server-side). Cloudflare R2 for object storage (presigned PUT for input uploads; service-side upload for outputs). Background worker pool (goroutines) for AI provider calls; Supabase Realtime pushes job status to clients.
+**Architecture:** Stateless Go HTTP service on Google Cloud Run (asia-southeast1). Supabase Postgres for data, Supabase Auth for JWT issuance (verified server-side). Cloudflare R2 for object storage (presigned PUT for input uploads; service-side upload for outputs). Background worker pool (goroutines) for AI provider calls; Supabase Realtime pushes job status to clients.
 
-**Tech Stack:** Go 1.22, `chi` router, `pgx/v5`, `aws-sdk-go-v2` (R2), `golang-jwt/jwt/v5`, `getsentry/sentry-go`, `kelseyhightower/envconfig`, `testify`, `testcontainers-go`, Docker, Fly.io.
+**Tech Stack:** Go 1.22, `chi` router, `pgx/v5`, `aws-sdk-go-v2` (R2), `golang-jwt/jwt/v5`, `getsentry/sentry-go`, `kelseyhightower/envconfig`, `testify`, `testcontainers-go`, Docker, Google Cloud Run.
 
 **Spec:** `docs/superpowers/specs/2026-05-21-coffee-shop-design-generator-prototype-design.md`
 
@@ -30,10 +30,12 @@ Before starting Task 1, complete these external account / project setups. List t
 - [ ] **Replicate**
   - Sign up at https://replicate.com, generate API token at https://replicate.com/account/api-tokens.
   - Note: `REPLICATE_API_TOKEN`. Pin model version for Flux Pro 1.1 by visiting https://replicate.com/black-forest-labs/flux-1.1-pro and copying the version hash → `REPLICATE_FLUX_VERSION`.
-- [ ] **Fly.io**
-  - Install `flyctl` (`brew install flyctl`).
-  - `fly auth signup` or `fly auth login`.
-  - Add payment method (free tier is metered after a small allowance).
+- [ ] **Google Cloud (for Cloud Run)**
+  - Install `gcloud` CLI (`brew install --cask google-cloud-sdk`).
+  - `gcloud auth login` and `gcloud config set project <your-project-id>`.
+  - Enable APIs: Cloud Run, Artifact Registry, Secret Manager (`gcloud services enable run.googleapis.com artifactregistry.googleapis.com secretmanager.googleapis.com`).
+  - Create Artifact Registry repo: `gcloud artifacts repositories create ai-image --repository-format=docker --location=asia-southeast1`.
+  - No payment method required for closed beta (Cloud Run free tier: 2M req/month, scale-to-zero).
 - [ ] **Sentry**
   - Create org + project (platform: Go).
   - Note: `SENTRY_DSN` for backend.
@@ -68,7 +70,8 @@ backend/
 │   ├── obs/sentry.go
 │   └── testutil/fixtures.go
 ├── Dockerfile
-├── fly.toml
+├── cloudrun-service.yaml
+├── deploy.sh
 ├── .dockerignore
 ├── .env.example
 ├── go.mod
@@ -4313,11 +4316,12 @@ git commit -m "backend: wire Sentry, providers, worker, and full HTTP server"
 
 ---
 
-## Task 19: Dockerfile + Fly.io config
+## Task 19: Dockerfile + Cloud Run config
 
 **Files:**
 - Create: `backend/Dockerfile`
-- Create: `backend/fly.toml`
+- Create: `backend/cloudrun-service.yaml`
+- Create: `backend/deploy.sh`
 
 - [ ] **Step 1: Write Dockerfile**
 
@@ -4349,92 +4353,82 @@ docker build -t ai-image-backend:dev .
 ```
 Expected: successful build.
 
-- [ ] **Step 3: Initialize Fly app**
+- [ ] **Step 3: Create cloudrun-service.yaml**
+
+Create `backend/cloudrun-service.yaml` (declarative Cloud Run config, placeholder image replaced at deploy time):
+
+```yaml
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: ai-image-backend
+  annotations:
+    run.googleapis.com/launch-stage: GA
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "10"
+        run.googleapis.com/cpu-throttling: "true"
+        run.googleapis.com/execution-environment: gen2
+    spec:
+      containerConcurrency: 80
+      timeoutSeconds: 300
+      containers:
+        - image: REPLACE_WITH_ARTIFACT_REGISTRY_IMAGE
+          ports:
+            - name: http1
+              containerPort: 8080
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          env:
+            - name: ENV
+              value: production
+            # Secrets injected via gcloud run services update --update-secrets
+            # See deploy.sh for the full list.
+```
+
+- [ ] **Step 4: Create deploy.sh**
+
+Create `backend/deploy.sh` (chmod +x after creation). See the file in the repo for full content.
+Key commands it runs:
+1. `docker build --platform linux/amd64` → builds amd64 image
+2. `gcloud auth configure-docker <region>-docker.pkg.dev` → auth to Artifact Registry
+3. `docker push` → push image
+4. `gcloud run deploy ai-image-backend --update-secrets ...` → deploy with all secrets from Secret Manager
+
+- [ ] **Step 5: Create secrets in Google Secret Manager**
+
+For each env var from your `.env`, create a secret:
+
+```bash
+for SECRET in DATABASE_URL SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY SUPABASE_JWT_SECRET \
+              R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_BUCKET R2_PUBLIC_BASE_URL \
+              GEMINI_API_KEY REPLICATE_API_TOKEN REPLICATE_FLUX_VERSION SENTRY_DSN; do
+  # Secret name uses lowercase with hyphens (Cloud Run convention)
+  NAME=$(echo "$SECRET" | tr '_' '-' | tr '[:upper:]' '[:lower:]')
+  VALUE=$(grep "^${SECRET}=" .env | cut -d= -f2-)
+  echo -n "$VALUE" | gcloud secrets create "$NAME" --data-file=- --replication-policy=automatic
+done
+```
+
+- [ ] **Step 6: Deploy via deploy.sh**
 
 ```bash
 cd backend
-fly launch --no-deploy --copy-config --name ai-image-backend --region sin
+export GCP_PROJECT=<your-project-id>
+./deploy.sh
 ```
-This generates `fly.toml`. When prompted:
-- Org: select your org
-- Postgres: NO (using Supabase)
-- Redis: NO
-- Deploy now: NO
-
-- [ ] **Step 4: Edit fly.toml**
-
-Replace `backend/fly.toml` with:
-
-```toml
-app = "ai-image-backend"
-primary_region = "sin"
-
-[build]
-  dockerfile = "Dockerfile"
-
-[env]
-  PORT = "8080"
-  ENV = "production"
-
-[http_service]
-  internal_port = 8080
-  force_https = true
-  auto_stop_machines = true
-  auto_start_machines = true
-  min_machines_running = 0
-  processes = ["app"]
-
-  [http_service.concurrency]
-    type = "requests"
-    soft_limit = 50
-    hard_limit = 100
-
-  [[http_service.checks]]
-    grace_period = "10s"
-    interval = "30s"
-    method = "get"
-    path = "/health"
-    timeout = "5s"
-
-[[vm]]
-  cpu_kind = "shared"
-  cpus = 1
-  memory_mb = 512
-```
-
-- [ ] **Step 5: Set secrets in Fly**
-
-Run for each value from your `.env`:
-
-```bash
-fly secrets set \
-  DATABASE_URL="..." \
-  SUPABASE_URL="..." \
-  SUPABASE_SERVICE_ROLE_KEY="..." \
-  SUPABASE_JWT_SECRET="..." \
-  R2_ACCOUNT_ID="..." \
-  R2_ACCESS_KEY_ID="..." \
-  R2_SECRET_ACCESS_KEY="..." \
-  R2_BUCKET="ai-image-prototype" \
-  R2_PUBLIC_BASE_URL="https://cdn.example.com" \
-  GEMINI_API_KEY="..." \
-  REPLICATE_API_TOKEN="..." \
-  REPLICATE_FLUX_VERSION="..." \
-  SENTRY_DSN="..."
-```
-
-- [ ] **Step 6: Deploy**
-
-```bash
-cd backend
-fly deploy
-```
-Expected: deploy succeeds. Capture the URL (e.g., `https://ai-image-backend.fly.dev`).
+Expected: deploy succeeds. Capture the Cloud Run URL (e.g., `https://ai-image-backend-<hash>-as.a.run.app`).
 
 - [ ] **Step 7: Verify health endpoint**
 
 ```bash
-curl -s https://ai-image-backend.fly.dev/health
+CLOUD_RUN_URL=$(gcloud run services describe ai-image-backend --region asia-southeast1 --format "value(status.url)")
+curl -s "${CLOUD_RUN_URL}/health"
 ```
 Expected: `{"status":"ok"}`.
 
@@ -4442,8 +4436,8 @@ Expected: `{"status":"ok"}`.
 
 ```bash
 cd /Users/bimantara/Dev/ASHA/Pathon/ai-image
-git add backend/Dockerfile backend/fly.toml
-git commit -m "backend: add Dockerfile and Fly.io deploy config"
+git add backend/Dockerfile backend/cloudrun-service.yaml backend/deploy.sh
+git commit -m "backend: add Dockerfile and Cloud Run deploy config"
 ```
 
 ---
@@ -4495,22 +4489,56 @@ jobs:
     needs: test
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      GCP_REGION: asia-southeast1
+      AR_REPO: ai-image
+      SERVICE: ai-image-backend
     steps:
       - uses: actions/checkout@v4
-      - uses: superfly/flyctl-actions/setup-flyctl@master
-      - run: flyctl deploy --remote-only
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and push image
         working-directory: backend
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          IMAGE=${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/${{ env.AR_REPO }}/${{ env.SERVICE }}:${{ github.sha }}
+          docker build --platform linux/amd64 -t $IMAGE .
+          docker push $IMAGE
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+
+      - name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.SERVICE }}
+          region: ${{ env.GCP_REGION }}
+          image: ${{ env.IMAGE }}
 ```
 
-- [ ] **Step 2: Add Fly token to GitHub repo secrets**
+- [ ] **Step 2: Set up Workload Identity Federation (keyless auth)**
 
-Generate token: `fly tokens create deploy -x 999999h`
+In Google Cloud console or via gcloud:
+1. Create a Workload Identity Pool and Provider for GitHub Actions.
+2. Bind your deploy service account to the pool for your repo.
+3. Note the `workload_identity_provider` value (format: `projects/<num>/locations/global/workloadIdentityPools/<pool>/providers/<provider>`).
+4. Note the `service_account` email (needs roles: Artifact Registry Writer + Cloud Run Developer + Secret Manager Secret Accessor).
 
 In GitHub repo → Settings → Secrets → Actions → New secret:
-- Name: `FLY_API_TOKEN`
-- Value: paste token
+- `GCP_PROJECT`: your GCP project ID
+- `GCP_WIF_PROVIDER`: workload identity provider resource name
+- `GCP_DEPLOY_SA`: service account email
 
 - [ ] **Step 3: Add basic golangci-lint config**
 
@@ -4541,13 +4569,20 @@ git add .github backend/.golangci.yml
 git commit -m "ci: add backend test + deploy workflow"
 git push origin main
 ```
-Expected: GitHub Actions runs and (after deploy step) backend is reachable. Check Actions tab in GitHub.
+Expected: GitHub Actions runs, builds image, pushes to Artifact Registry, and deploys to Cloud Run. Check Actions tab in GitHub. Cloud Run URL format: `https://ai-image-backend-<hash>-as.a.run.app`.
 
 ---
 
 ## Task 21: End-to-end smoke test against deployed backend
 
 **Files:** none — manual verification.
+
+Get your Cloud Run URL first:
+```bash
+BASE_URL=$(gcloud run services describe ai-image-backend --region asia-southeast1 --format "value(status.url)")
+echo "$BASE_URL"
+# e.g. https://ai-image-backend-<hash>-as.a.run.app
+```
 
 - [ ] **Step 1: Create test invite codes in Supabase**
 
@@ -4577,7 +4612,7 @@ Expected: a long JWT string.
 - [ ] **Step 4: Test redeem-invite**
 
 ```bash
-curl -X POST https://ai-image-backend.fly.dev/redeem-invite \
+curl -X POST ${BASE_URL}/redeem-invite \
   -H "Authorization: Bearer $JWT" \
   -H "Content-Type: application/json" \
   -d '{"code":"TEST001"}'
@@ -4587,7 +4622,7 @@ Expected: `{"redeemed":true}`.
 - [ ] **Step 5: Test upload presign**
 
 ```bash
-curl -X POST https://ai-image-backend.fly.dev/uploads/presign \
+curl -X POST ${BASE_URL}/uploads/presign \
   -H "Authorization: Bearer $JWT" \
   -H "Content-Type: application/json" \
   -d '{"content_type":"image/jpeg"}'
@@ -4608,7 +4643,7 @@ Expected: 200.
 
 ```bash
 PUBLIC_URL='...' # from step 5
-curl -X POST https://ai-image-backend.fly.dev/generate \
+curl -X POST ${BASE_URL}/generate \
   -H "Authorization: Bearer $JWT" \
   -H "Content-Type: application/json" \
   -d "{
@@ -4625,7 +4660,7 @@ Expected: `{"job_id":"...","status":"queued","estimated_seconds":25}`.
 ```bash
 JOB_ID='...' # from step 7
 for i in {1..30}; do
-  curl -s https://ai-image-backend.fly.dev/jobs/$JOB_ID \
+  curl -s ${BASE_URL}/jobs/$JOB_ID \
     -H "Authorization: Bearer $JWT" | jq '.status, .output_image_url, .error_message'
   sleep 3
 done
@@ -4643,7 +4678,7 @@ In a loop, call `/generate` 11 times. The 11th should return 429.
 - [ ] **Step 11: Test invalid input**
 
 ```bash
-curl -X POST https://ai-image-backend.fly.dev/generate \
+curl -X POST ${BASE_URL}/generate \
   -H "Authorization: Bearer $JWT" \
   -H "Content-Type: application/json" \
   -d '{"input_image_url":"https://x","mode":"realistic","prompt":"x"}'
@@ -4666,7 +4701,7 @@ git push --tags
 
 ## Done
 
-At this point the backend is fully functional, deployed to Fly.io Singapore, and able to:
+At this point the backend is fully functional, deployed to Google Cloud Run (asia-southeast1), and able to:
 - Authenticate Supabase JWTs.
 - Gate signup via invite codes.
 - Accept image uploads via presigned R2 URLs.

@@ -69,8 +69,9 @@ Recruited manually via personal network, WhatsApp, and a single Twitter/IG post.
 ```
 ┌─────────────────┐         ┌──────────────────────┐         ┌─────────────────────┐
 │  Flutter App    │ HTTPS   │   Go Backend         │         │  AI Providers       │
-│  (iOS/Android)  │ ──────► │   Fly.io Singapore   │ ──────► │  • Gemini 2.5 Flash │
-│                 │         │                      │         │    Image (realistic)│
+│  (iOS/Android)  │ ──────► │   Cloud Run          │ ──────► │  • Gemini 2.5 Flash │
+│                 │         │   (asia-southeast1)  │         │    Image (realistic)│
+│                 │         │                      │         │                     │
 │  • Auth         │ ◄────── │  • JWT verify        │ ◄────── │  • Flux Pro 1.1     │
 │  • Capture      │   JSON  │  • Rate limit        │         │    via Replicate    │
 │  • Compose      │         │  • Provider routing  │         │    (inspirational)  │
@@ -92,7 +93,7 @@ Recruited manually via personal network, WhatsApp, and a single Twitter/IG post.
                             └──────────────────────┘
 ```
 
-**Why Fly.io Singapore**: low latency to Indonesia (~10ms), reasonable to other Asian beta users, auto-scale to zero saves money during low usage, easy multi-region expansion later.
+**Why Google Cloud Run (asia-southeast1)**: low latency to Indonesia (~10ms), reasonable to other Asian beta users, scale-to-zero with free tier (2M req/month) covers the entire closed beta at $0/month, easy multi-region expansion later.
 
 **Why R2 over Supabase Storage**: free egress means image delivery doesn't surprise the cost ceiling; built-in CDN keeps results fast globally.
 
@@ -123,7 +124,7 @@ Recruited manually via personal network, WhatsApp, and a single Twitter/IG post.
 - **Config**: env vars via `kelseyhightower/envconfig`
 
 ### Infrastructure
-- **Backend hosting**: Fly.io (single region: `sin`)
+- **Backend hosting**: Google Cloud Run (single region: `asia-southeast1`)
 - **Database & Auth**: Supabase (free tier, region: Singapore)
 - **Object storage**: Cloudflare R2 + Cloudflare CDN
 - **AI providers**:
@@ -323,7 +324,7 @@ All backend errors logged to Sentry with `user_id`, `job_id`, `request_id`. Flut
 
 ### CI/CD
 - **GitHub Actions** workflows:
-  - `backend.yml`: `go test`, `golangci-lint`, build Docker, push to Fly registry, deploy.
+  - `backend.yml`: `go test`, `golangci-lint`, build Docker, push to Artifact Registry, deploy to Cloud Run.
   - `mobile.yml`: `flutter analyze`, `flutter test`, build APK + IPA on tag.
 - Branch protection: tests must pass before merge to `main`.
 
@@ -331,9 +332,11 @@ All backend errors logged to Sentry with `user_id`, `job_id`, `request_id`. Flut
 
 ### Backend
 - Dockerfile multi-stage build (small final image).
-- Fly.io app: 1 region (`sin`), 1 machine (shared-cpu-1x, 512MB), scale-to-zero enabled.
+- Google Cloud Run: 1 region (`asia-southeast1`), 512MB memory, 1 vCPU, scale-to-zero enabled (min 0, max 10 instances).
 - Postgres on Supabase (free tier).
-- Env vars set via `fly secrets set` (Gemini key, Replicate key, R2 creds, Supabase service role key, Sentry DSN).
+- Secrets stored in Google Secret Manager; injected at deploy time via `gcloud run deploy --update-secrets` (Gemini key, Replicate key, R2 creds, Supabase service role key, Sentry DSN).
+- Manual deploys: `backend/deploy.sh` (requires `GCP_PROJECT` env var and `gcloud auth login`).
+- CI/CD: GitHub Actions using Workload Identity Federation (keyless auth); requires GitHub secrets `GCP_PROJECT`, `GCP_WIF_PROVIDER`, `GCP_DEPLOY_SA`.
 
 ### Mobile
 - **iOS**: TestFlight build. Manual Xcode signing or Fastlane. **Requires Apple Developer Program** ($99/year).
@@ -356,7 +359,7 @@ Once beta validates the product, the rebuild adds:
 - **Subscription via RevenueCat** — paywall, webhook handling, entitlement caching.
 - **Public release** to App Store + Play Store with subscription tiers.
 - **Localization** — Indonesian + English.
-- **Multi-region backend** (Fly.io: SIN + IAD + FRA) for global latency.
+- **Multi-region backend** (Cloud Run: asia-southeast1 + us-east1 + europe-west1) for global latency.
 - **Production observability** — Grafana Cloud / similar, full metrics dashboard.
 - **Cost guard per user per day** (replaces beta's simple counter).
 - **Subscription state reconciliation cron** (handles webhook losses).

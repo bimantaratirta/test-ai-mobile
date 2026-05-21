@@ -35,10 +35,39 @@ jobs:
     needs: test
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      GCP_REGION: asia-southeast1
+      AR_REPO: ai-image
+      SERVICE: ai-image-backend
     steps:
       - uses: actions/checkout@v4
-      - uses: superfly/flyctl-actions/setup-flyctl@master
-      - run: flyctl deploy --remote-only
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and push image
         working-directory: backend
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          IMAGE=${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/${{ env.AR_REPO }}/${{ env.SERVICE }}:${{ github.sha }}
+          docker build --platform linux/amd64 -t $IMAGE .
+          docker push $IMAGE
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+
+      - name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.SERVICE }}
+          region: ${{ env.GCP_REGION }}
+          image: ${{ env.IMAGE }}
