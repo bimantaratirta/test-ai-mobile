@@ -3,26 +3,25 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
-	"net/http"
+	stdhttp "net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/bimantara/ai-image/backend/internal/auth"
 	"github.com/bimantara/ai-image/backend/internal/config"
 	"github.com/bimantara/ai-image/backend/internal/db"
+	apphttp "github.com/bimantara/ai-image/backend/internal/http"
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	slog.SetDefault(logger)
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 
 	cfg, err := config.Load()
 	if err != nil {
-		slog.Error("config load failed", "err", err)
-		os.Exit(1)
+		slog.Error("config", "err", err); os.Exit(1)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -30,42 +29,36 @@ func main() {
 
 	database, err := db.New(ctx, cfg.DatabaseURL)
 	if err != nil {
-		slog.Error("db init failed", "err", err)
-		os.Exit(1)
+		slog.Error("db", "err", err); os.Exit(1)
 	}
 	defer database.Close()
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprintln(w, `{"status":"ok"}`)
+	router := apphttp.NewRouter(apphttp.Deps{
+		JWTVerifier: auth.NewVerifier(cfg.SupabaseJWTSecret),
 	})
 
-	srv := &http.Server{
+	srv := &stdhttp.Server{
 		Addr:         ":" + cfg.Port,
-		Handler:      mux,
+		Handler:      router,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 100 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
 
-	idleConnsClosed := make(chan struct{})
+	done := make(chan struct{})
 	go func() {
 		sigint := make(chan os.Signal, 1)
 		signal.Notify(sigint, syscall.SIGINT, syscall.SIGTERM)
 		<-sigint
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer shutdownCancel()
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			slog.Error("graceful shutdown failed", "err", err)
-		}
-		close(idleConnsClosed)
+		sctx, scancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer scancel()
+		_ = srv.Shutdown(sctx)
+		close(done)
 	}()
 
-	slog.Info("server starting", "port", cfg.Port, "env", cfg.Env)
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		slog.Error("server failed", "err", err)
-		os.Exit(1)
+	slog.Info("listening", "port", cfg.Port, "env", cfg.Env)
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, stdhttp.ErrServerClosed) {
+		slog.Error("server", "err", err); os.Exit(1)
 	}
-	<-idleConnsClosed
+	<-done
 }
