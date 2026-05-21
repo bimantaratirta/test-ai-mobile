@@ -12,18 +12,8 @@ import 'features/home/home_shell.dart';
 import 'features/capture/capture_screen.dart';
 import 'features/compose/compose_screen.dart';
 import 'features/job/job_progress_screen.dart';
-
-// All screens are referenced by name only here. Implementations come
-// in later tasks. Until those screens exist we use a placeholder
-// "soon" screen so the router compiles and the app boots.
-
-class _SoonScreen extends StatelessWidget {
-  const _SoonScreen(this.label);
-  final String label;
-  @override
-  Widget build(BuildContext context) =>
-      Scaffold(body: Center(child: Text('$label — coming soon')));
-}
+import 'features/gallery/gallery_screen.dart';
+import 'features/gallery/gallery_detail_screen.dart';
 
 /// Bridges a Stream into a ChangeNotifier so GoRouter can refresh on auth
 /// changes. Fires notifyListeners() on every stream event (and once at
@@ -88,9 +78,12 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (_, st) =>
             JobProgressScreen(jobId: st.pathParameters['id']!),
       ),
-      GoRoute(path: '/gallery', builder: (_, __) => const _SoonScreen('Gallery')),
-      GoRoute(path: '/gallery/:id', builder: (_, st) =>
-          _SoonScreen('Gallery item ${st.pathParameters['id']}')),
+      GoRoute(path: '/gallery', builder: (_, __) => const GalleryScreen()),
+      GoRoute(
+        path: '/gallery/:id',
+        builder: (_, st) =>
+            GalleryDetailScreen(jobId: st.pathParameters['id']!),
+      ),
     ],
   );
 });
