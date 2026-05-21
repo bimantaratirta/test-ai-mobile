@@ -35,7 +35,7 @@ func dualServer(t *testing.T, postHandler http.HandlerFunc) *httptest.Server {
 func TestGenerate_Success(t *testing.T) {
 	srv := dualServer(t, func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		assert.Contains(t, string(body), "google/gemini-2.5-flash-image-preview")
+		assert.Contains(t, string(body), "google/gemini-2.5-flash-image")
 		assert.Contains(t, string(body), "Scandinavian")
 		_, _ = w.Write([]byte(fmt.Sprintf(`{
 			"id": "gen-abc",
@@ -56,7 +56,7 @@ func TestGenerate_Success(t *testing.T) {
 	p := New(Config{
 		APIKey:  "test",
 		BaseURL: srv.URL,
-		Model:   "google/gemini-2.5-flash-image-preview",
+		Model:   "google/gemini-2.5-flash-image",
 	})
 	res, err := p.Generate(context.Background(), providers.Input{
 		InputImageURL: srv.URL + "/in.jpg",
@@ -78,7 +78,7 @@ func TestGenerate_RateLimited(t *testing.T) {
 	})
 	defer srv.Close()
 
-	p := New(Config{APIKey: "test", BaseURL: srv.URL, Model: "google/gemini-2.5-flash-image-preview"})
+	p := New(Config{APIKey: "test", BaseURL: srv.URL, Model: "google/gemini-2.5-flash-image"})
 	_, err := p.Generate(context.Background(), providers.Input{
 		InputImageURL: srv.URL + "/in.jpg",
 		Prompt:        "five chars",
@@ -97,7 +97,7 @@ func TestGenerate_ContentModerated(t *testing.T) {
 	})
 	defer srv.Close()
 
-	p := New(Config{APIKey: "test", BaseURL: srv.URL, Model: "google/gemini-2.5-flash-image-preview"})
+	p := New(Config{APIKey: "test", BaseURL: srv.URL, Model: "google/gemini-2.5-flash-image"})
 	_, err := p.Generate(context.Background(), providers.Input{
 		InputImageURL: srv.URL + "/in.jpg",
 		Prompt:        "five chars",
@@ -120,7 +120,7 @@ func TestGenerate_PromptBuiltCorrectly(t *testing.T) {
 	})
 	defer srv.Close()
 
-	p := New(Config{APIKey: "test", BaseURL: srv.URL, Model: "google/gemini-2.5-flash-image-preview"})
+	p := New(Config{APIKey: "test", BaseURL: srv.URL, Model: "google/gemini-2.5-flash-image"})
 	_, err := p.Generate(context.Background(), providers.Input{
 		InputImageURL: srv.URL + "/in.jpg",
 		Prompt:        "Cozy with warm woods",

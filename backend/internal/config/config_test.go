@@ -29,7 +29,7 @@ func TestLoad_FromEnv(t *testing.T) {
 	assert.Equal(t, "https://is3.cloudhost.id", cfg.S3Endpoint)
 	assert.Equal(t, "auto", cfg.S3Region) // default
 	assert.Equal(t, "or-key", cfg.OpenRouterAPIKey)
-	assert.Equal(t, "google/gemini-2.5-flash-image-preview", cfg.OpenRouterRealisticModel) // default
+	assert.Equal(t, "google/gemini-2.5-flash-image", cfg.OpenRouterRealisticModel) // default
 	assert.Equal(t, "", cfg.OpenRouterInspirationalModel)                                  // default
 	assert.Equal(t, "", cfg.ReplicateAPIToken)                                             // optional
 	assert.Equal(t, 10, cfg.RateLimitPerDay)

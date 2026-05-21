@@ -21,7 +21,7 @@ type Config struct {
 	S3PublicBaseURL   string `envconfig:"S3_PUBLIC_BASE_URL"   required:"true"`
 
 	OpenRouterAPIKey             string `envconfig:"OPENROUTER_API_KEY"              required:"true"`
-	OpenRouterRealisticModel     string `envconfig:"OPENROUTER_REALISTIC_MODEL"      default:"google/gemini-2.5-flash-image-preview"`
+	OpenRouterRealisticModel     string `envconfig:"OPENROUTER_REALISTIC_MODEL"      default:"google/gemini-2.5-flash-image"`
 	OpenRouterInspirationalModel string `envconfig:"OPENROUTER_INSPIRATIONAL_MODEL"  default:""`
 
 	ReplicateAPIToken    string `envconfig:"REPLICATE_API_TOKEN"     default:""`
