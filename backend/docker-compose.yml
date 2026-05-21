@@ -2,7 +2,14 @@
 # Image is built locally on the VPS from ./Dockerfile (no external registry
 # needed). Workflow on the VPS:
 #   git pull && docker compose build && docker compose up -d
-# Caddy handles TLS termination + auto-Let's-Encrypt certs.
+#
+# This compose file does NOT include a reverse proxy. The backend binds to
+# 127.0.0.1:8080 on the host, and an external nginx (running on the host) is
+# expected to terminate TLS and reverse-proxy to it. See `deploy/nginx-vhost.conf`
+# for a reference server block.
+#
+# If you don't have nginx and want a single-container HTTPS stack, see the
+# `Caddyfile` in this directory and add a `caddy` service back here.
 
 services:
   backend:
@@ -12,39 +19,12 @@ services:
     image: ai-image-backend:local
     restart: unless-stopped
     env_file: .env
-    expose:
-      - "8080"
-    # No public ports — Caddy is the only edge.
+    ports:
+      # Bind only to loopback — only the host's nginx talks to it.
+      - "127.0.0.1:8080:8080"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
-    networks:
-      - edge
-
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    env_file: .env   # provides DOMAIN + ACME_EMAIL referenced inside Caddyfile
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"   # HTTP/3
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - backend
-    networks:
-      - edge
-
-volumes:
-  caddy_data:
-  caddy_config:
-
-networks:
-  edge:
-    driver: bridge
