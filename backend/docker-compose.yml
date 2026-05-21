@@ -1,12 +1,15 @@
 # VPS deployment for ai-image backend.
-# Run from this directory on the VPS:
-#   docker compose pull && docker compose up -d
-# The backend image is pulled from GHCR (built by GitHub Actions on main).
+# Image is built locally on the VPS from ./Dockerfile (no external registry
+# needed). Workflow on the VPS:
+#   git pull && docker compose build && docker compose up -d
 # Caddy handles TLS termination + auto-Let's-Encrypt certs.
 
 services:
   backend:
-    image: ${BACKEND_IMAGE:-ghcr.io/bimantara/ai-image-backend:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ai-image-backend:local
     restart: unless-stopped
     env_file: .env
     expose:
@@ -24,6 +27,7 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    env_file: .env   # provides DOMAIN + ACME_EMAIL referenced inside Caddyfile
     ports:
       - "80:80"
       - "443:443"
