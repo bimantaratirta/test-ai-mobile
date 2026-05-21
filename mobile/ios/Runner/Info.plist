@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Ai Image</string>
+	<string>AI Image</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -72,5 +72,11 @@
 	<string>Used to pick an empty-room photo from your library.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Used to save generated designs to your photos.</string>
+	<!-- Required: lock down arbitrary loads; we use HTTPS-only for backend and S3. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<false/>
+	</dict>
 </dict>
 </plist>
