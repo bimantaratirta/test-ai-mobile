@@ -5,6 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'features/auth/welcome_screen.dart';
+import 'features/auth/login_screen.dart';
+import 'features/auth/invite_screen.dart';
+
 // All screens are referenced by name only here. Implementations come
 // in later tasks. Until those screens exist we use a placeholder
 // "soon" screen so the router compiles and the app boots.
@@ -58,9 +62,9 @@ final routerProvider = Provider<GoRouter>((ref) {
       return null;
     },
     routes: [
-      GoRoute(path: '/welcome', builder: (_, __) => const _SoonScreen('Welcome')),
-      GoRoute(path: '/login',   builder: (_, __) => const _SoonScreen('Login')),
-      GoRoute(path: '/invite',  builder: (_, __) => const _SoonScreen('Invite')),
+      GoRoute(path: '/welcome', builder: (_, __) => const WelcomeScreen()),
+      GoRoute(path: '/login',   builder: (_, __) => const LoginScreen()),
+      GoRoute(path: '/invite',  builder: (_, __) => const InviteScreen()),
       GoRoute(path: '/home',    builder: (_, __) => const _SoonScreen('Home')),
       GoRoute(path: '/capture', builder: (_, __) => const _SoonScreen('Capture')),
       GoRoute(path: '/compose', builder: (_, __) => const _SoonScreen('Compose')),
