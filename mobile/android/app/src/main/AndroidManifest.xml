@@ -2,7 +2,7 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <application
-        android:label="ai_image"
+        android:label="AI Image"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
