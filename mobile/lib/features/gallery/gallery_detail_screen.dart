@@ -12,7 +12,7 @@ class GalleryDetailScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(jobWatchProvider(jobId));
     return Scaffold(
-      appBar: AppBar(title: const Text('Design')),
+      appBar: AppBar(leading: BackButton(), title: const Text('Design')),
       body: SafeArea(
         child: async.when(
           loading: () => const Center(child: CircularProgressIndicator()),
@@ -20,10 +20,7 @@ class GalleryDetailScreen extends ConsumerWidget {
           data: (job) => ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              Text(
-                'Before',
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
+              Text('Before', style: Theme.of(context).textTheme.titleSmall),
               const SizedBox(height: 8),
               ClipRRect(
                 borderRadius: BorderRadius.circular(12),
@@ -33,10 +30,7 @@ class GalleryDetailScreen extends ConsumerWidget {
                 ),
               ),
               const SizedBox(height: 16),
-              Text(
-                'After',
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
+              Text('After', style: Theme.of(context).textTheme.titleSmall),
               const SizedBox(height: 8),
               if (job.outputImageUrl != null)
                 ClipRRect(
@@ -49,9 +43,7 @@ class GalleryDetailScreen extends ConsumerWidget {
               else
                 Padding(
                   padding: const EdgeInsets.all(24),
-                  child: Center(
-                    child: Text(job.errorMessage ?? 'No output'),
-                  ),
+                  child: Center(child: Text(job.errorMessage ?? 'No output')),
                 ),
               const SizedBox(height: 24),
               _Meta(label: 'Mode', value: job.mode),
@@ -83,8 +75,7 @@ class _Meta extends StatelessWidget {
         children: [
           SizedBox(
             width: 120,
-            child: Text(label,
-                style: Theme.of(context).textTheme.bodySmall),
+            child: Text(label, style: Theme.of(context).textTheme.bodySmall),
           ),
           Expanded(child: Text(value)),
         ],
