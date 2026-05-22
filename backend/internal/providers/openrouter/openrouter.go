@@ -227,6 +227,15 @@ func parseDataURI(uri string) ([]byte, string, error) {
 }
 
 func buildPrompt(userPrompt, stylePreset string) string {
+	// Escape hatch: prompts prefixed with "RAW:" skip the coffee-shop
+	// wrapper and pass straight to the model. Useful for exploring other
+	// use cases (portrait edits, scene transforms, product viz, etc.).
+	trimmed := strings.TrimSpace(userPrompt)
+	if strings.HasPrefix(strings.ToUpper(trimmed), "RAW:") {
+		// strip the RAW: prefix (case-insensitive) and surrounding whitespace
+		return strings.TrimSpace(trimmed[4:])
+	}
+
 	style := stylePreset
 	if style == "" {
 		style = "modern"
