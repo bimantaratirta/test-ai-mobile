@@ -59,11 +59,15 @@ func main() {
 	}
 
 	reg := providers.NewRegistry()
-	// Realistic mode: always via OpenRouter
+	// Realistic mode: always via OpenRouter. TwoStep splits the gen into
+	// "clean room" then "renovate" — costs ~2× per gen but narrows each
+	// model call's task, which empirically reduces phantom-windows /
+	// shifted-walls artifacts.
 	reg.Register(db.ModeRealistic, openrouter.New(openrouter.Config{
-		APIKey: cfg.OpenRouterAPIKey,
-		Model:  cfg.OpenRouterRealisticModel,
-		Name:   "openrouter-realistic",
+		APIKey:  cfg.OpenRouterAPIKey,
+		Model:   cfg.OpenRouterRealisticModel,
+		Name:    "openrouter-realistic",
+		TwoStep: true,
 	}))
 	// Inspirational mode: conditional registration
 	switch {
