@@ -236,16 +236,36 @@ func buildPrompt(userPrompt, stylePreset string) string {
 		return strings.TrimSpace(trimmed[4:])
 	}
 
-	style := stylePreset
+	style := strings.ToLower(stylePreset)
 	if style == "" {
 		style = "modern"
 	}
+	article := "a"
+	switch style[0] {
+	case 'a', 'e', 'i', 'o', 'u':
+		article = "an"
+	}
 	return fmt.Sprintf(
-		"Redesign this empty room into a %s coffee shop interior based on: %s.\n"+
-			"Preserve the original room structure (walls, windows, doors, ceiling).\n"+
-			"Add furniture, lighting, materials, and decor that fit the style.\n"+
-			"Photorealistic, professional interior photography.",
-		strings.ToLower(style), userPrompt)
+		"Reimagine the room shown in the input photo as %s %s coffee shop "+
+			"interior, photographed from the exact same camera angle and "+
+			"vantage point as the input.\n\n"+
+			"STRICT — do not violate:\n"+
+			"• Keep the existing walls, windows, doors, ceiling, and floor "+
+			"layout exactly as in the input. Do not move, add, or remove "+
+			"windows or doors. Do not change wall positions, ceiling "+
+			"height, or room proportions. Do not change the camera angle "+
+			"or perspective.\n"+
+			"• The input may show the room cluttered, half-finished, or "+
+			"in use (piles of items, old furniture, boxes, debris). Ignore "+
+			"all such contents — treat the space as empty for design "+
+			"purposes.\n\n"+
+			"REPLACE the contents with: furniture, counter, seating, "+
+			"lighting, flooring, materials, and decor appropriate for %s "+
+			"%s coffee shop, guided by the user's vision below.\n\n"+
+			"User's design vision: %s\n\n"+
+			"Output: a photorealistic professional interior photograph of "+
+			"the redesigned space, same camera angle as the input.",
+		article, style, article, style, userPrompt)
 }
 
 func fetchImage(ctx context.Context, c *http.Client, url string) ([]byte, string, error) {
