@@ -246,26 +246,47 @@ func buildPrompt(userPrompt, stylePreset string) string {
 		article = "an"
 	}
 	return fmt.Sprintf(
-		"Reimagine the room shown in the input photo as %s %s coffee shop "+
-			"interior, photographed from the exact same camera angle and "+
-			"vantage point as the input.\n\n"+
-			"STRICT — do not violate:\n"+
-			"• Keep the existing walls, windows, doors, ceiling, and floor "+
-			"layout exactly as in the input. Do not move, add, or remove "+
-			"windows or doors. Do not change wall positions, ceiling "+
-			"height, or room proportions. Do not change the camera angle "+
-			"or perspective.\n"+
-			"• The input may show the room cluttered, half-finished, or "+
-			"in use (piles of items, old furniture, boxes, debris). Ignore "+
-			"all such contents — treat the space as empty for design "+
-			"purposes.\n\n"+
-			"REPLACE the contents with: furniture, counter, seating, "+
-			"lighting, flooring, materials, and decor appropriate for %s "+
-			"%s coffee shop, guided by the user's vision below.\n\n"+
-			"User's design vision: %s\n\n"+
-			"Output: a photorealistic professional interior photograph of "+
-			"the redesigned space, same camera angle as the input.",
-		article, style, article, style, userPrompt)
+		"TASK: Produce a photorealistic interior photograph of how THIS "+
+			"EXACT room would look AFTER a %s coffee shop renovation. The "+
+			"output and the input must look like two photos taken at the "+
+			"same spot, with the same camera and lens, of the same room — "+
+			"one before and one after a renovation.\n\n"+
+			"STEP 1 — ANALYZE the input photo before generating. Identify:\n"+
+			"• The number of walls visible and their orientation.\n"+
+			"• Ceiling height relative to the walls.\n"+
+			"• Window count, size, shape, and exact wall position.\n"+
+			"• Door count, size, and exact wall position.\n"+
+			"• Floor shape and approximate dimensions.\n"+
+			"• Any architectural features (columns, beams, alcoves, ledges, "+
+			"electrical outlets at fixed heights).\n"+
+			"• The exact camera vantage point, angle, focal length, and "+
+			"framing.\n\n"+
+			"STEP 2 — PRESERVE every item from step 1 in the output:\n"+
+			"1. Walls — same count, same positions, same orientations. Do "+
+			"NOT add new walls. Do NOT remove walls. Do NOT shift any wall.\n"+
+			"2. Room dimensions — width, depth, ceiling height must match. "+
+			"Do NOT make the room larger or smaller.\n"+
+			"3. Windows — same count, same size, same shape, same wall, "+
+			"same position on that wall. Do NOT add or remove windows. Do "+
+			"NOT change a window into a door or vice versa.\n"+
+			"4. Doors — same count, same position. Do NOT add or remove.\n"+
+			"5. Camera viewpoint — same vantage, same lens, same framing. "+
+			"Do NOT zoom in or out. Do NOT change the angle.\n"+
+			"6. Architectural features — every column, beam, alcove, or "+
+			"ledge in the input stays in the output, same place.\n\n"+
+			"STEP 3 — CLEAR all current contents and clutter from the room. "+
+			"Treat any piles of items, debris, old furniture, boxes, "+
+			"plastic bags, monitors, or random objects in the input as "+
+			"items being moved out for the renovation. They must NOT "+
+			"appear in the output.\n\n"+
+			"STEP 4 — RENOVATE the now-empty room as %s %s coffee shop. "+
+			"Add: counter, seating, tables, lighting fixtures, flooring "+
+			"finish, wall finish (paint or panels), decor, signage. Place "+
+			"these naturally inside the SAME walls preserved in step 2.\n\n"+
+			"USER'S DESIGN VISION for the renovated space:\n%s\n\n"+
+			"OUTPUT: a single photorealistic photograph indistinguishable "+
+			"from a real photo of this exact room after the renovation.",
+		style, article, style, userPrompt)
 }
 
 func fetchImage(ctx context.Context, c *http.Client, url string) ([]byte, string, error) {
